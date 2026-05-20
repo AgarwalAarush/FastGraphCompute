@@ -99,9 +99,15 @@ torch::Tensor binned_select_knn_grad_cuda_fn(
     const auto n_coords = coordinates.size(1);
     const auto K = indices.size(1);
     auto options_float = torch::TensorOptions().dtype(torch::kFloat32).device(coordinates.device());
-    torch::Tensor grad_coords = torch::empty({n_vert, n_coords}, options_float);
+    // zeros (not empty) because selfloop writes grad_coords[i_v] by assignment,
+    // and any rows skipped (e.g. masked queries) must contribute 0, not garbage.
+    torch::Tensor grad_coords = torch::zeros({n_vert, n_coords}, options_float);
     grid_and_block gb(n_vert,256,n_coords,4);
     if (indices.scalar_type() == torch::kInt64) {
+        // Both kernels are on the default stream and serialize naturally; no
+        // explicit cudaDeviceSynchronize between them is needed. The neighloop
+        // kernel atomicAdds into rows m != i_v while selfloop wrote i_v's row,
+        // so the ordering of the two launches is correctness-preserving.
         select_knn_grad_selfloop_kernel<int64_t><<<gb.grid(),gb.block()>>>(
             grad_distances.data_ptr<float>(),
             indices.data_ptr<int64_t>(),
@@ -112,8 +118,6 @@ torch::Tensor binned_select_knn_grad_cuda_fn(
             K,
             n_coords
         );
-        C10_CUDA_KERNEL_LAUNCH_CHECK();
-        cudaDeviceSynchronize();
         C10_CUDA_KERNEL_LAUNCH_CHECK();
         select_knn_grad_neighloop_kernel<int64_t><<<gb.grid(),gb.block()>>>(
             grad_distances.data_ptr<float>(),
@@ -126,35 +130,8 @@ torch::Tensor binned_select_knn_grad_cuda_fn(
             n_coords
         );
         C10_CUDA_KERNEL_LAUNCH_CHECK();
-        cudaDeviceSynchronize();
-        C10_CUDA_KERNEL_LAUNCH_CHECK();
-    } else if (indices.scalar_type() == torch::kInt64) {
-        select_knn_grad_selfloop_kernel<int64_t><<<gb.grid(),gb.block()>>>(
-            grad_distances.data_ptr<float>(),
-            indices.data_ptr<int64_t>(),
-            distances.data_ptr<float>(),
-            coordinates.data_ptr<float>(),
-            grad_coords.data_ptr<float>(),
-            n_vert,
-            K,
-            n_coords
-        );
-        C10_CUDA_KERNEL_LAUNCH_CHECK();
-        cudaDeviceSynchronize();
-        C10_CUDA_KERNEL_LAUNCH_CHECK();
-        select_knn_grad_neighloop_kernel<int64_t><<<gb.grid(),gb.block()>>>(
-            grad_distances.data_ptr<float>(),
-            indices.data_ptr<int64_t>(),
-            distances.data_ptr<float>(),
-            coordinates.data_ptr<float>(),
-            grad_coords.data_ptr<float>(),
-            n_vert,
-            K,
-            n_coords
-        );
-        C10_CUDA_KERNEL_LAUNCH_CHECK();
-        cudaDeviceSynchronize();
-        C10_CUDA_KERNEL_LAUNCH_CHECK();
+    } else {
+        throw std::invalid_argument("Unsupported tensor type for indices (expected int64).");
     }
     return grad_coords;
 }

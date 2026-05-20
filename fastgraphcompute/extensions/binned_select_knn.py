@@ -65,19 +65,14 @@ def binned_select_knn(K: int,
     if n_bins is not None and not isinstance(n_bins, torch.Tensor):
         n_bins = torch.tensor(n_bins, dtype=torch.int64, device=coords.device)
 
-    # For autograd tensors, use clone().contiguous() to ensure clean contiguous tensors
-    if coords.requires_grad:
-        coords = coords.clone().contiguous()
-    else:
-        coords = coords.contiguous()
+    # Autograd preserves input tensors across the backward pass automatically;
+    # only contiguity is required for the CUDA kernel.
+    coords = coords.contiguous()
 
     row_splits = row_splits.contiguous()
 
     if direction is not None:
-        if direction.requires_grad:
-            direction = direction.clone().contiguous()
-        else:
-            direction = direction.contiguous()
+        direction = direction.contiguous()
 
     if n_bins is not None:
         n_bins = n_bins.contiguous()
