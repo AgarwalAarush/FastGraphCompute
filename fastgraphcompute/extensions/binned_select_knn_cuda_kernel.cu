@@ -5,6 +5,8 @@
 #include "cuda_helpers.h"
 #include "helpers.h"
 #include <vector>
+#include <string>
+#include <cstdlib>
 #include <c10/macros/Macros.h>
 
 #define C10_CUDA_KERNEL_LAUNCH_CHECK() {                         \
@@ -275,6 +277,139 @@ static void select_knn_kernel(
 }
 
 
+// Global-memory variant — top-K maintained directly in d_dist / d_indices.
+// Used as a runtime fallback when (K > 64) or (n_coords >= 8): in that
+// regime the per-thread local arrays in select_knn_kernel start spilling
+// out of registers and the spill cost outweighs the saved global rescans.
+// Algorithmically identical to the local-array kernel; the only
+// difference is *where* the top-K state lives.
+template<int N_bin_dims, typename T>
+__global__
+static void select_knn_kernel_global(
+
+        const float * d_coord,
+        const T * d_bin_idx,
+        const T * d_direction,
+        const T * d_dim_bin_idx,
+
+        const T * d_bin_boundaries,
+        const T * d_n_bins,
+
+        const float* d_bin_width,
+
+        int64_t *d_indices,
+        float *d_dist,
+
+        const int64_t n_vert,
+        const int64_t n_neigh,
+        const int64_t n_coords,
+        const int64_t n_bin_dim,
+
+        const int64_t n_bboundaries,
+        bool use_direction) {
+
+    int64_t i_v =  blockIdx.x * blockDim.x + threadIdx.x;
+    if(i_v>=n_vert)
+        return;
+
+    if(use_direction &&
+            (d_direction[i_v] == 0 || d_direction[i_v] == 2))
+        return;
+
+    int64_t nfilled=1;//self-reference from defaults at slot 0
+    int64_t maxidx_local=0;
+    float maxdistsq=0;
+
+    int64_t total_subbins = 1;
+    for(int64_t sbi=0;sbi<n_bin_dim;sbi++)
+        total_subbins *= d_n_bins[sbi];
+
+    int64_t iv_bin = d_bin_idx[i_v];
+    int64_t gbin_offset = total_subbins*(iv_bin / total_subbins);
+    int64_t sb_flat_offset = iv_bin - gbin_offset;
+
+    float coord_i_v[10];
+    int64_t max_loc_n_coords = std::min(n_coords,(int64_t)10);
+    for(int64_t i=0;i<max_loc_n_coords;i++){
+        coord_i_v[i] = d_coord[I2D(i_v,i,n_coords)];
+    }
+
+    binstepper<N_bin_dims, T> stepper(d_n_bins, &d_dim_bin_idx[I2D(i_v,1,n_bin_dim+1)]);
+
+    bool continue_search = true;
+    int64_t distance = 0;
+    while(continue_search){
+        stepper.set_d(distance);
+        continue_search=false;
+
+        while(true){
+            int64_t idx = stepper.step();
+            if(idx<0){
+                if(!continue_search && !distance){
+                    printf("\nERROR: binned_select_knn.cu (global): stopping search for vtx %lld at distance %lld\n",i_v,distance);
+                }
+                break;
+            }
+
+            idx+=gbin_offset;
+            if(idx>=n_bboundaries-1){
+                printf("\nERROR: binned_select_knn.cu (global): boundary issue: idx %lld out of range, gb offset %lld, distance %lld, sb_flat_offset %lld, nbb %lld\n", idx, gbin_offset, distance, sb_flat_offset,n_bboundaries);
+                continue;
+            }
+
+            int64_t start_vertex = d_bin_boundaries[idx];
+            int64_t end_vertex = d_bin_boundaries[idx+1];
+
+            if(start_vertex == end_vertex){
+                continue_search=true;
+                continue;
+            }
+
+            if(start_vertex>=n_vert || end_vertex>n_vert){
+                printf("\nERROR: binned_select_knn.cu (global): start_vertex %lld or end_vertex %lld out of range %lld\n", start_vertex, end_vertex, n_vert);
+                continue;
+            }
+
+            for(int64_t j_v=start_vertex;j_v<end_vertex;j_v++){
+                if(i_v == j_v)
+                    continue;
+
+                if(use_direction &&
+                        (d_direction[j_v] == 1 || d_direction[j_v] == 2))
+                    continue;
+
+                float distsq = 0;
+                if(max_loc_n_coords < n_coords)
+                    distsq = calculateDistance(i_v,j_v,d_coord,n_coords);
+                else
+                    distsq = calculateDistanceLocalChache(coord_i_v,j_v,d_coord,n_coords);
+
+                if(nfilled < n_neigh){
+                    d_indices[I2D(i_v,nfilled,n_neigh)] = j_v;
+                    d_dist[I2D(i_v,nfilled,n_neigh)] = distsq;
+                    if(distsq > maxdistsq){
+                        maxdistsq = distsq;
+                        maxidx_local = nfilled;
+                    }
+                    nfilled++;
+                    continue;
+                }
+                if(distsq < maxdistsq){
+                    d_indices[I2D(i_v,maxidx_local,n_neigh)] = j_v;
+                    d_dist[I2D(i_v,maxidx_local,n_neigh)] = distsq;
+                    maxidx_local = searchLargestDistance(i_v,d_dist,n_neigh,maxdistsq);
+                }
+            }
+
+            continue_search=true;
+        }
+        if(nfilled==n_neigh && d_bin_width[0]*distance * d_bin_width[0]*distance > maxdistsq)
+            break;
+        distance++;
+    }
+}
+
+
 // Function to dispatch based on input tensor types (int64 or int64)
 std::tuple<torch::Tensor, torch::Tensor> binned_select_knn_cuda_fn(
     torch::Tensor coordinates,
@@ -309,11 +444,28 @@ std::tuple<torch::Tensor, torch::Tensor> binned_select_knn_cuda_fn(
     TORCH_CHECK(bin_idx.scalar_type() == torch::kInt64,
                 "binned_select_knn_cuda: bin_idx must be int64.");
 
-    // Pick the smallest K_MAX bucket >= K. The kernel holds the top-K in
-    // a thread-local array sized at compile time, so we instantiate a few
-    // buckets and dispatch by runtime K. Anything above 256 falls back to
-    // 256 (and currently throws — extend the bucket list if needed).
-#define BSK_LAUNCH(NBD, KM)                                                                 \
+    // Tier-2a dispatch.
+    //
+    // Local-array kernel (select_knn_kernel) is faster in the regime
+    // where the per-thread top-K state fits in registers / L1: low K
+    // (≤64) and low coord dim (≤7). Outside that regime, the array
+    // spills and the saved global rescans no longer cover the spill
+    // cost; A/B benchmarks showed regressions of up to ~0.52x at
+    // (dim=10, K=128). We fall back to the original global-memory
+    // kernel in that regime — same algorithm, same neighbour set,
+    // just stores top-K in d_dist/d_indices directly.
+    //
+    // Thresholds (K > 64) and (n_coords >= 8) come from measured
+    // crossover, not a model. Override with the env var
+    // FGC_FORCE_GLOBAL=1 to force the global kernel for everything
+    // (useful for A/B testing or regression isolation).
+    static const bool force_global = []{
+        const char* e = std::getenv("FGC_FORCE_GLOBAL");
+        return e && std::string(e) != "0" && !std::string(e).empty();
+    }();
+    const bool use_local = !force_global && (K <= 64) && (n_coords <= 7);
+
+#define BSK_LAUNCH_LOCAL(NBD, KM)                                                           \
     select_knn_kernel<(NBD), (KM), int64_t><<<gb.grid(), gb.block()>>>(                     \
         coordinates.data_ptr<float>(), bin_idx.data_ptr<int64_t>(),                         \
         direction.data_ptr<int64_t>(), dim_bin_idx.data_ptr<int64_t>(),                     \
@@ -322,24 +474,35 @@ std::tuple<torch::Tensor, torch::Tensor> binned_select_knn_cuda_fn(
         distances.data_ptr<float>(), n_vert, K, n_coords, n_bin_dims, n_bboundaries,        \
         use_direction)
 
-#define BSK_DISPATCH_KMAX(NBD)                                                              \
+#define BSK_LAUNCH_GLOBAL(NBD)                                                              \
+    select_knn_kernel_global<(NBD), int64_t><<<gb.grid(), gb.block()>>>(                    \
+        coordinates.data_ptr<float>(), bin_idx.data_ptr<int64_t>(),                         \
+        direction.data_ptr<int64_t>(), dim_bin_idx.data_ptr<int64_t>(),                     \
+        bin_boundaries.data_ptr<int64_t>(), n_bins.data_ptr<int64_t>(),                     \
+        bin_width.data_ptr<float>(), indices.data_ptr<int64_t>(),                           \
+        distances.data_ptr<float>(), n_vert, K, n_coords, n_bin_dims, n_bboundaries,        \
+        use_direction)
+
+#define BSK_DISPATCH(NBD)                                                                   \
     do {                                                                                    \
-        if      (K <= 16)  { BSK_LAUNCH(NBD, 16);  }                                        \
-        else if (K <= 32)  { BSK_LAUNCH(NBD, 32);  }                                        \
-        else if (K <= 64)  { BSK_LAUNCH(NBD, 64);  }                                        \
-        else if (K <= 128) { BSK_LAUNCH(NBD, 128); }                                        \
-        else if (K <= 256) { BSK_LAUNCH(NBD, 256); }                                        \
-        else { throw std::invalid_argument("binned_select_knn_cuda: K > 256 not supported"); } \
+        if (use_local) {                                                                    \
+            if      (K <= 16) { BSK_LAUNCH_LOCAL(NBD, 16); }                                \
+            else if (K <= 32) { BSK_LAUNCH_LOCAL(NBD, 32); }                                \
+            else              { BSK_LAUNCH_LOCAL(NBD, 64); }                                \
+        } else {                                                                            \
+            BSK_LAUNCH_GLOBAL(NBD);                                                         \
+        }                                                                                   \
     } while(0)
 
-    if      (n_bin_dims == 2) BSK_DISPATCH_KMAX(2);
-    else if (n_bin_dims == 3) BSK_DISPATCH_KMAX(3);
-    else if (n_bin_dims == 4) BSK_DISPATCH_KMAX(4);
-    else if (n_bin_dims == 5) BSK_DISPATCH_KMAX(5);
+    if      (n_bin_dims == 2) BSK_DISPATCH(2);
+    else if (n_bin_dims == 3) BSK_DISPATCH(3);
+    else if (n_bin_dims == 4) BSK_DISPATCH(4);
+    else if (n_bin_dims == 5) BSK_DISPATCH(5);
     else throw std::invalid_argument("Unsupported number of binning dimensions.");
 
-#undef BSK_DISPATCH_KMAX
-#undef BSK_LAUNCH
+#undef BSK_DISPATCH
+#undef BSK_LAUNCH_GLOBAL
+#undef BSK_LAUNCH_LOCAL
 
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 
