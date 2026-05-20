@@ -90,7 +90,8 @@ struct BinnedKNNAutograd : public torch::autograd::Function<BinnedKNNAutograd> {
         c10::optional<torch::Tensor> direction,
         c10::optional<torch::Tensor> n_bins_user,
         int64_t max_bin_dims_user,
-        bool torch_compatible_indices) {
+        bool torch_compatible_indices,
+        c10::optional<torch::Tensor> bin_coords_user) {
 
         TORCH_CHECK(coords.size(1) > 0, "Input coordinates must have at least one dimension.");
         TORCH_CHECK(max_bin_dims_user > 0, "max_bin_dims must be greater than 0.");
@@ -99,10 +100,24 @@ struct BinnedKNNAutograd : public torch::autograd::Function<BinnedKNNAutograd> {
         auto int64_options = torch::TensorOptions().dtype(torch::kInt64).device(original_device);
         int64_t max_bin_dims = std::min(max_bin_dims_user, coords.size(1));
 
-        // Calculate bins and prepare coordinates for binning
+        // If the caller supplied an explicit bin_coords (e.g. PCA projection), use it.
+        // The provided tensor's column count overrides max_bin_dims for binning,
+        // while distance computation still uses the full `coords`.
+        torch::Tensor bin_coords;
+        if (bin_coords_user.has_value() && bin_coords_user.value().numel() > 0) {
+            bin_coords = bin_coords_user.value().contiguous();
+            TORCH_CHECK(bin_coords.size(0) == coords.size(0),
+                        "bin_coords must have the same number of rows as coords.");
+            TORCH_CHECK(bin_coords.size(1) > 0 && bin_coords.size(1) <= 5,
+                        "bin_coords second dimension must be in [1, 5].");
+            max_bin_dims = bin_coords.size(1);
+        } else {
+            bin_coords = coords.size(1) > max_bin_dims ?
+                coords.slice(static_cast<int64_t>(1), static_cast<int64_t>(0), max_bin_dims).contiguous() : coords;
+        }
+
+        // Calculate bins (after potentially adjusting max_bin_dims from bin_coords)
         auto n_bins = calculate_optimal_bins(row_splits, K, max_bin_dims, n_bins_user, int64_options);
-        auto bin_coords = coords.size(1) > max_bin_dims ?
-            coords.slice(static_cast<int64_t>(1), static_cast<int64_t>(0), max_bin_dims).contiguous() : coords;
 
         // Perform binning - call function directly
         auto binning_result = bin_by_coordinates(
@@ -239,9 +254,11 @@ struct BinnedKNNAutograd : public torch::autograd::Function<BinnedKNNAutograd> {
             }
         }
 
-        // Return proper variable_list
+        // Return proper variable_list (8 inputs: coords, row_splits, K, direction,
+        // n_bins, max_bin_dims, torch_compatible_indices, bin_coords)
         torch::autograd::variable_list grad_inputs;
         grad_inputs.push_back(grad_coordinates);
+        grad_inputs.push_back(torch::Tensor());
         grad_inputs.push_back(torch::Tensor());
         grad_inputs.push_back(torch::Tensor());
         grad_inputs.push_back(torch::Tensor());
@@ -260,16 +277,18 @@ std::tuple<torch::Tensor, torch::Tensor> binned_select_knn_cpp_op(
     c10::optional<torch::Tensor> direction,
     c10::optional<torch::Tensor> n_bins_user,
     int64_t max_bin_dims_user,
-    bool torch_compatible_indices) {
+    bool torch_compatible_indices,
+    c10::optional<torch::Tensor> bin_coords_user) {
 
     auto result = BinnedKNNAutograd::apply(coords, row_splits, K, direction,
-                                          n_bins_user, max_bin_dims_user, torch_compatible_indices);
+                                          n_bins_user, max_bin_dims_user,
+                                          torch_compatible_indices, bin_coords_user);
     return std::make_tuple(result[0], result[1]);
 }
 
 // Operator Registration
 TORCH_LIBRARY(fastgraphcompute_custom_ops, m) {
-    m.def("binned_select_knn_autograd(Tensor coords, Tensor row_splits, int K, Tensor? direction, Tensor? n_bins, int max_bin_dims, bool torch_compatible_indices) -> (Tensor, Tensor)");
+    m.def("binned_select_knn_autograd(Tensor coords, Tensor row_splits, int K, Tensor? direction, Tensor? n_bins, int max_bin_dims, bool torch_compatible_indices, Tensor? bin_coords) -> (Tensor, Tensor)");
 }
 
 TORCH_LIBRARY_IMPL(fastgraphcompute_custom_ops, Autograd, m) {
