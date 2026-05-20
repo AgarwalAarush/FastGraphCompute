@@ -58,6 +58,28 @@ static int64_t searchLargestDistance(int64_t i_v, float* d_dist, int64_t n_neigh
 }
 
 
+// Local-array version of searchLargestDistance. Reads from thread-local
+// memory (or registers if the compiler keeps the array there) instead of
+// the global d_dist/d_indices buffers. n_neigh is the runtime number of
+// neighbours; K_MAX is the compile-time upper bound.
+template<int K_MAX>
+__device__ __forceinline__
+static int local_search_largest_distance(const float* local_dist, int64_t n_neigh, float& maxdist){
+    maxdist = 0.f;
+    int maxidx = 0;
+    #pragma unroll
+    for(int n=1; n<K_MAX; n++){
+        if(n >= (int)n_neigh) break;
+        float d = local_dist[n];
+        if(d > maxdist){
+            maxdist = d;
+            maxidx = n;
+        }
+    }
+    return maxidx;
+}
+
+
 __global__
 static void setDefaults(
         int64_t *d_indices,
@@ -96,7 +118,7 @@ static void setDefaults(
 
 
 
-template<int N_bin_dims, typename T>
+template<int N_bin_dims, int K_MAX, typename T>
 __global__
 static void select_knn_kernel(
 
@@ -123,10 +145,6 @@ static void select_knn_kernel(
 
     //bin boundaries [i] [i+1] describe the scan ranges
 
-
-    //really no buffering at all here
-
-
     int64_t i_v =  blockIdx.x * blockDim.x + threadIdx.x;
     if(i_v>=n_vert)
         return;//safe guard
@@ -136,11 +154,18 @@ static void select_knn_kernel(
             (d_direction[i_v] == 0 || d_direction[i_v] == 2))
         return;
 
-    //continue;//do nothing
+    // Per-thread top-K state held in compile-time-sized arrays. Compiler
+    // either keeps these in registers (small K_MAX) or in L1-cached local
+    // memory (larger K_MAX). Either way, this avoids the per-replacement
+    // global rescan that the original kernel did against d_dist.
+    //
+    // Slot 0 is always self (i_v, distsq=0) and is written by setDefaults.
+    // We track slots 1..K_MAX-1 here and write them back at kernel exit.
+    float local_dist[K_MAX];
+    int64_t local_idx[K_MAX];
 
-
-    int64_t nfilled=1;//self-reference from defaults
-    int64_t maxidx_local=0;
+    int64_t nfilled=1;//self-reference from defaults at slot 0
+    int maxidx_local=0;
     float maxdistsq=0;
 
     int64_t total_subbins = 1;
@@ -151,8 +176,6 @@ static void select_knn_kernel(
     int64_t gbin_offset = total_subbins*(iv_bin / total_subbins);
     int64_t sb_flat_offset = iv_bin - gbin_offset;
 
-    // printf("considering vertex %d, bin %d, flat offset %d, global bin offset %d\n",i_v,iv_bin,sb_flat_offset,gbin_offset);
-    
     float coord_i_v[10];//keep this and the next "10" in sync
     int64_t max_loc_n_coords = std::min(n_coords,(int64_t)10);
     for(int64_t i=0;i<max_loc_n_coords;i++){
@@ -215,34 +238,40 @@ static void select_knn_kernel(
                 else
                     distsq = calculateDistanceLocalChache(coord_i_v,j_v,d_coord,n_coords);
                 if(nfilled< n_neigh){
-                    d_indices[I2D(i_v,nfilled,n_neigh)] = j_v;
-                    d_dist[I2D(i_v,nfilled,n_neigh)] = distsq;
+                    local_idx[nfilled]  = j_v;
+                    local_dist[nfilled] = distsq;
                     if(distsq > maxdistsq){
                         maxdistsq = distsq;
-                        maxidx_local = nfilled;
+                        maxidx_local = (int)nfilled;
                     }
                     nfilled++;
                     continue;
                 }
                 if(distsq < maxdistsq){// automatically applies to max radius
-                    //replace former max
-                    d_indices[I2D(i_v,maxidx_local,n_neigh)] = j_v;
-                    d_dist[I2D(i_v,maxidx_local,n_neigh)] = distsq;
-                    //search new max
-                    maxidx_local = searchLargestDistance(i_v,d_dist,n_neigh,maxdistsq);
+                    //replace former max in local arrays
+                    local_idx[maxidx_local]  = j_v;
+                    local_dist[maxidx_local] = distsq;
+                    //search new max in local memory (no global rescan)
+                    maxidx_local = local_search_largest_distance<K_MAX>(local_dist, n_neigh, maxdistsq);
                 }
             }
 
             continue_search=true;//at least one was valid
 
         }
-        // debug: never stop unless all bins exhausted DEBUG FIXME
         if(nfilled==n_neigh && d_bin_width[0]*distance * d_bin_width[0]*distance > maxdistsq)
             break;//done
 
         distance++;
     }
 
+    // Write filled slots back to global memory once. Slot 0 was written
+    // by setDefaults; unfilled slots (nfilled..n_neigh-1) keep their
+    // setDefaults values.
+    for(int64_t n=1; n<nfilled; n++){
+        d_indices[I2D(i_v,n,n_neigh)] = local_idx[n];
+        d_dist[I2D(i_v,n,n_neigh)]    = local_dist[n];
+    }
 }
 
 
@@ -277,47 +306,42 @@ std::tuple<torch::Tensor, torch::Tensor> binned_select_knn_cuda_fn(
 
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 
-    if (bin_idx.scalar_type() == torch::kInt64) {
+    TORCH_CHECK(bin_idx.scalar_type() == torch::kInt64,
+                "binned_select_knn_cuda: bin_idx must be int64.");
 
-        if (n_bin_dims == 2)
-            select_knn_kernel<2, int64_t><<<gb.grid(),gb.block()>>>(
-                coordinates.data_ptr<float>(), bin_idx.data_ptr<int64_t>(),
-                direction.data_ptr<int64_t>(), dim_bin_idx.data_ptr<int64_t>(),
-                bin_boundaries.data_ptr<int64_t>(), n_bins.data_ptr<int64_t>(),
-                bin_width.data_ptr<float>(), indices.data_ptr<int64_t>(),
-                distances.data_ptr<float>(), n_vert, K, n_coords, n_bin_dims, n_bboundaries, use_direction);
+    // Pick the smallest K_MAX bucket >= K. The kernel holds the top-K in
+    // a thread-local array sized at compile time, so we instantiate a few
+    // buckets and dispatch by runtime K. Anything above 256 falls back to
+    // 256 (and currently throws — extend the bucket list if needed).
+#define BSK_LAUNCH(NBD, KM)                                                                 \
+    select_knn_kernel<(NBD), (KM), int64_t><<<gb.grid(), gb.block()>>>(                     \
+        coordinates.data_ptr<float>(), bin_idx.data_ptr<int64_t>(),                         \
+        direction.data_ptr<int64_t>(), dim_bin_idx.data_ptr<int64_t>(),                     \
+        bin_boundaries.data_ptr<int64_t>(), n_bins.data_ptr<int64_t>(),                     \
+        bin_width.data_ptr<float>(), indices.data_ptr<int64_t>(),                           \
+        distances.data_ptr<float>(), n_vert, K, n_coords, n_bin_dims, n_bboundaries,        \
+        use_direction)
 
-        else if (n_bin_dims == 3)
-            select_knn_kernel<3, int64_t><<<gb.grid(),gb.block()>>>(
-                coordinates.data_ptr<float>(), bin_idx.data_ptr<int64_t>(),
-                direction.data_ptr<int64_t>(), dim_bin_idx.data_ptr<int64_t>(),
-                bin_boundaries.data_ptr<int64_t>(), n_bins.data_ptr<int64_t>(),
-                bin_width.data_ptr<float>(), indices.data_ptr<int64_t>(),
-                distances.data_ptr<float>(), n_vert, K, n_coords, n_bin_dims, n_bboundaries, use_direction);
+#define BSK_DISPATCH_KMAX(NBD)                                                              \
+    do {                                                                                    \
+        if      (K <= 16)  { BSK_LAUNCH(NBD, 16);  }                                        \
+        else if (K <= 32)  { BSK_LAUNCH(NBD, 32);  }                                        \
+        else if (K <= 64)  { BSK_LAUNCH(NBD, 64);  }                                        \
+        else if (K <= 128) { BSK_LAUNCH(NBD, 128); }                                        \
+        else if (K <= 256) { BSK_LAUNCH(NBD, 256); }                                        \
+        else { throw std::invalid_argument("binned_select_knn_cuda: K > 256 not supported"); } \
+    } while(0)
 
-        else if (n_bin_dims == 4)
-            select_knn_kernel<4, int64_t><<<gb.grid(),gb.block()>>>(
-                coordinates.data_ptr<float>(), bin_idx.data_ptr<int64_t>(),
-                direction.data_ptr<int64_t>(), dim_bin_idx.data_ptr<int64_t>(),
-                bin_boundaries.data_ptr<int64_t>(), n_bins.data_ptr<int64_t>(),
-                bin_width.data_ptr<float>(), indices.data_ptr<int64_t>(),
-                distances.data_ptr<float>(), n_vert, K, n_coords, n_bin_dims, n_bboundaries, use_direction);
+    if      (n_bin_dims == 2) BSK_DISPATCH_KMAX(2);
+    else if (n_bin_dims == 3) BSK_DISPATCH_KMAX(3);
+    else if (n_bin_dims == 4) BSK_DISPATCH_KMAX(4);
+    else if (n_bin_dims == 5) BSK_DISPATCH_KMAX(5);
+    else throw std::invalid_argument("Unsupported number of binning dimensions.");
 
-        else if (n_bin_dims == 5)
-            select_knn_kernel<5, int64_t><<<gb.grid(),gb.block()>>>(
-                coordinates.data_ptr<float>(), bin_idx.data_ptr<int64_t>(),
-                direction.data_ptr<int64_t>(), dim_bin_idx.data_ptr<int64_t>(),
-                bin_boundaries.data_ptr<int64_t>(), n_bins.data_ptr<int64_t>(),
-                bin_width.data_ptr<float>(), indices.data_ptr<int64_t>(),
-                distances.data_ptr<float>(), n_vert, K, n_coords, n_bin_dims, n_bboundaries, use_direction);
+#undef BSK_DISPATCH_KMAX
+#undef BSK_LAUNCH
 
-        else{
-            throw std::invalid_argument("Unsupported number of binning dimensions.");
-        }
-        C10_CUDA_KERNEL_LAUNCH_CHECK();
-    } else {
-        throw std::invalid_argument("Unsupported tensor type for bin_idx (expected int64).");
-    }
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
 
     return std::make_tuple(indices, distances);
 }
