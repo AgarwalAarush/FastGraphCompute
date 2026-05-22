@@ -84,11 +84,13 @@ def binned_select_knn(K: int,
     if not isinstance(max_bin_dims, int):
         max_bin_dims = int(max_bin_dims)
 
-    # Automatically adjust max_bin_dims based on coordinate dimensions
-    # FGC supports max_bin_dims of 2, 3, 4, or 5 only
-    # Limit to min of coordinate dimensions and 5
+    # Automatically adjust max_bin_dims based on coordinate dimensions.
+    # Kernels are compiled for max_bin_dims in {2,3,4,5,6,7}. The historical
+    # cap was 5; extended to 7 for the max_bin_dims ablation in the PCA-FGC
+    # paper. Going beyond 7 requires adding another template instantiation
+    # in binned_select_knn_cuda_kernel.cu.
     coord_dims = coords.shape[1]
-    max_bin_dims = min(max_bin_dims, coord_dims, 5)
+    max_bin_dims = min(max_bin_dims, coord_dims, 7)
     max_bin_dims = max(max_bin_dims, 2)  # Ensure at least 2
 
     # Ensure row_splits is a tensor
@@ -154,7 +156,8 @@ def binned_select_knn_pca(K: int,
     ``binned_select_knn`` (no projection needed).
     """
     coord_dims = coords.shape[1]
-    k = min(max_bin_dims, coord_dims, 5)
+    # Bin-dim cap extended from 5 to 7 for the max_bin_dims ablation.
+    k = min(max_bin_dims, coord_dims, 7)
     k = max(k, 2)
     if coord_dims <= k or os.environ.get('FGC_DISABLE_PCA') == '1':
         return binned_select_knn(K, coords, row_splits, direction, n_bins,

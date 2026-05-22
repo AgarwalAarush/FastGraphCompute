@@ -498,6 +498,8 @@ std::tuple<torch::Tensor, torch::Tensor> binned_select_knn_cuda_fn(
     else if (n_bin_dims == 3) BSK_DISPATCH(3);
     else if (n_bin_dims == 4) BSK_DISPATCH(4);
     else if (n_bin_dims == 5) BSK_DISPATCH(5);
+    else if (n_bin_dims == 6) BSK_DISPATCH(6);
+    else if (n_bin_dims == 7) BSK_DISPATCH(7);
     else throw std::invalid_argument("Unsupported number of binning dimensions.");
 
 #undef BSK_DISPATCH

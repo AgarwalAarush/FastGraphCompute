@@ -108,8 +108,8 @@ struct BinnedKNNAutograd : public torch::autograd::Function<BinnedKNNAutograd> {
             bin_coords = bin_coords_user.value().contiguous();
             TORCH_CHECK(bin_coords.size(0) == coords.size(0),
                         "bin_coords must have the same number of rows as coords.");
-            TORCH_CHECK(bin_coords.size(1) > 0 && bin_coords.size(1) <= 5,
-                        "bin_coords second dimension must be in [1, 5].");
+            TORCH_CHECK(bin_coords.size(1) > 0 && bin_coords.size(1) <= 7,
+                        "bin_coords second dimension must be in [1, 7].");
             max_bin_dims = bin_coords.size(1);
         } else {
             bin_coords = coords.size(1) > max_bin_dims ?
