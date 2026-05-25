@@ -209,12 +209,20 @@ struct BinnedKNNAutograd : public torch::autograd::Function<BinnedKNNAutograd> {
             idx_final.scatter_(static_cast<int64_t>(0), sorting_indices_long.unsqueeze(-1).expand_as(idx_unsorted), idx_unsorted);
         }
 
-        // Fix save_for_backward - use proper variable_list
-        torch::autograd::variable_list saved_tensors;
-        saved_tensors.push_back(idx_final);
-        saved_tensors.push_back(dist_final);
-        saved_tensors.push_back(coords);
-        ctx->save_for_backward(saved_tensors);
+        // Phase 2a: only save for backward when autograd actually needs it.
+        // Guards: GradMode globally enabled (i.e., not inside torch.no_grad())
+        // AND coords requires_grad (it's the only differentiable input). When
+        // either is false the saved-tensor refs only inflate memory without
+        // serving a purpose; skipping the save lets PyTorch's caching
+        // allocator free idx_final / dist_final / coords as soon as the
+        // caller drops them.
+        if (at::GradMode::is_enabled() && coords.requires_grad()) {
+            torch::autograd::variable_list saved_tensors;
+            saved_tensors.push_back(idx_final);
+            saved_tensors.push_back(dist_final);
+            saved_tensors.push_back(coords);
+            ctx->save_for_backward(saved_tensors);
+        }
 
         // Fix return statement - create proper variable_list
         torch::autograd::variable_list outputs;
