@@ -48,7 +48,8 @@ def binned_select_knn(K: int,
                       n_bins: Optional[torch.Tensor] = None,
                       max_bin_dims: int = 3,
                       torch_compatible_indices: bool = False,
-                      bin_coords: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+                      bin_coords: Optional[torch.Tensor] = None,
+                      use_int32_indices: bool = False) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Perform K-Nearest Neighbors selection using binning with C++ autograd support.
 
@@ -67,6 +68,14 @@ def binned_select_knn(K: int,
             guarantee is preserved as long as the projection from ``coords`` to
             ``bin_coords`` is contractive (true for any linear projection by a matrix
             with orthonormal columns).
+        use_int32_indices (bool, optional): Phase 2c opt-in. When True AND the
+            number of points ``N < 2**31``, the returned ``indices`` tensor is
+            ``int32`` instead of ``int64`` — halves the size of every per-cell
+            index tensor along the kernel pipeline (~800 MB saved at the
+            paper's d=8 N=5M k=40 headline cell). Only active on CUDA; the CPU
+            path silently ignores. Backward continues to use int64 internally,
+            so gradients are unaffected. Default ``False`` keeps the canonical
+            ``int64`` output and byte-exact compatibility with v1.1-paper.
 
     Returns:
         Tuple[torch.Tensor, torch.Tensor]: Indices and distances of the nearest neighbors.
@@ -127,11 +136,8 @@ def binned_select_knn(K: int,
         bin_coords = bin_coords.contiguous()
 
     # Use the C++ autograd kernel
-    # Note: use_int32_indices defaults to False here for ABI compatibility;
-    # the public binned_select_knn / binned_select_knn_pca wrappers expose
-    # the kwarg in commit (d).
     idx, dist = torch.ops.fastgraphcompute_custom_ops.binned_select_knn_autograd(
-        coords, row_splits, K, direction, n_bins, max_bin_dims, torch_compatible_indices, bin_coords, False)
+        coords, row_splits, K, direction, n_bins, max_bin_dims, torch_compatible_indices, bin_coords, use_int32_indices)
 
     return idx, dist
 
@@ -143,7 +149,8 @@ def binned_select_knn_pca(K: int,
                           n_bins: Optional[torch.Tensor] = None,
                           max_bin_dims: int = 3,
                           torch_compatible_indices: bool = False,
-                          pca_subsample: int = 50000) -> Tuple[torch.Tensor, torch.Tensor]:
+                          pca_subsample: int = 50000,
+                          use_int32_indices: bool = False) -> Tuple[torch.Tensor, torch.Tensor]:
     """PCA-projected variant of :func:`binned_select_knn`.
 
     Computes the top-``max_bin_dims`` principal components of ``coords`` (on a
@@ -155,14 +162,20 @@ def binned_select_knn_pca(K: int,
 
     For ``coords.shape[1] <= max_bin_dims`` this falls back to the standard
     ``binned_select_knn`` (no projection needed).
+
+    Args:
+        use_int32_indices (bool, optional): see :func:`binned_select_knn`.
+            Requires ``N < 2**31``; CUDA-only.
     """
     coord_dims = coords.shape[1]
     k = min(max_bin_dims, coord_dims, 5)
     k = max(k, 2)
     if coord_dims <= k or os.environ.get('FGC_DISABLE_PCA') == '1':
         return binned_select_knn(K, coords, row_splits, direction, n_bins,
-                                 max_bin_dims, torch_compatible_indices, None)
+                                 max_bin_dims, torch_compatible_indices, None,
+                                 use_int32_indices)
     Vk = _compute_pca_projection(coords.detach(), k, pca_subsample)
     bin_coords = coords.to(dtype=torch.float32).matmul(Vk)
     return binned_select_knn(K, coords, row_splits, direction, n_bins,
-                             max_bin_dims, torch_compatible_indices, bin_coords)
+                             max_bin_dims, torch_compatible_indices, bin_coords,
+                             use_int32_indices)
