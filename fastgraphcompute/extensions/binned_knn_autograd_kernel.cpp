@@ -98,7 +98,8 @@ struct BinnedKNNAutograd : public torch::autograd::Function<BinnedKNNAutograd> {
         c10::optional<torch::Tensor> n_bins_user,
         int64_t max_bin_dims_user,
         bool torch_compatible_indices,
-        c10::optional<torch::Tensor> bin_coords_user) {
+        c10::optional<torch::Tensor> bin_coords_user,
+        bool use_int32_indices) {
 
         TORCH_CHECK(coords.size(1) > 0, "Input coordinates must have at least one dimension.");
         TORCH_CHECK(max_bin_dims_user > 0, "max_bin_dims must be greater than 0.");
@@ -176,16 +177,17 @@ struct BinnedKNNAutograd : public torch::autograd::Function<BinnedKNNAutograd> {
                                      bin_boundaries.to(torch::kInt64), nb.to(torch::kInt64), bin_width, sdirection.value());
 
         // Call KNN kernel directly based on device type.
-        // Phase 2c: default-path always passes output_int32=false so the
-        // returned indices remain int64 (byte-identical to v1.1-paper).
-        // The opt-in path is wired in a later commit.
+        // Phase 2c: only the CUDA path supports int32 output; CPU ignores
+        // the flag. The flag is also a no-op when n_vert overflows int32
+        // (the C++ kernel double-checks this).
+        const bool request_int32 = use_int32_indices && k_scoords.device().is_cuda();
         std::tuple<torch::Tensor, torch::Tensor> knn_result;
         if (k_scoords.device().is_cuda()) {
             knn_result = binned_select_knn_cuda_fn(
                 k_scoords, k_sbinning, k_sdbinning, k_bin_boundaries,
                 k_n_bins, k_bin_width, k_direction,
                 torch_compatible_indices, use_direction, K,
-                /*output_int32=*/false);
+                /*output_int32=*/request_int32);
         } else {
             knn_result = binned_select_knn_cpu(
                 k_scoords, k_sbinning, k_sdbinning, k_bin_boundaries,
@@ -233,9 +235,18 @@ struct BinnedKNNAutograd : public torch::autograd::Function<BinnedKNNAutograd> {
         // serving a purpose; skipping the save lets PyTorch's caching
         // allocator free idx_final / dist_final / coords as soon as the
         // caller drops them.
+        //
+        // Phase 2c: the backward grad kernel expects int64 indices; when the
+        // forward produced int32 (opt-in), cast to int64 for the saved copy.
+        // The user-facing return still uses whatever dtype the kernel
+        // produced. This keeps the headline memory win for the forward call
+        // while preserving the existing backward contract.
         if (at::GradMode::is_enabled() && coords.requires_grad()) {
             torch::autograd::variable_list saved_tensors;
-            saved_tensors.push_back(idx_final);
+            torch::Tensor idx_for_backward = idx_final.scalar_type() == torch::kInt64
+                ? idx_final
+                : idx_final.to(torch::kInt64);
+            saved_tensors.push_back(idx_for_backward);
             saved_tensors.push_back(dist_final);
             saved_tensors.push_back(coords);
             ctx->save_for_backward(saved_tensors);
@@ -279,10 +290,12 @@ struct BinnedKNNAutograd : public torch::autograd::Function<BinnedKNNAutograd> {
             }
         }
 
-        // Return proper variable_list (8 inputs: coords, row_splits, K, direction,
-        // n_bins, max_bin_dims, torch_compatible_indices, bin_coords)
+        // Return proper variable_list (9 inputs: coords, row_splits, K, direction,
+        // n_bins, max_bin_dims, torch_compatible_indices, bin_coords,
+        // use_int32_indices)
         torch::autograd::variable_list grad_inputs;
         grad_inputs.push_back(grad_coordinates);
+        grad_inputs.push_back(torch::Tensor());
         grad_inputs.push_back(torch::Tensor());
         grad_inputs.push_back(torch::Tensor());
         grad_inputs.push_back(torch::Tensor());
@@ -294,7 +307,12 @@ struct BinnedKNNAutograd : public torch::autograd::Function<BinnedKNNAutograd> {
     }
 };
 
-// Main function that applies the autograd operation
+// Main function that applies the autograd operation.
+//
+// Phase 2c: `use_int32_indices` is a new optional bool. Default false
+// preserves v1.1-paper behaviour. When true and the binning happens on a
+// CUDA device with n_vert < INT32_MAX, the returned indices tensor is
+// int32 — halving every per-cell index allocation along the pipeline.
 std::tuple<torch::Tensor, torch::Tensor> binned_select_knn_cpp_op(
     torch::Tensor coords,
     torch::Tensor row_splits,
@@ -303,17 +321,19 @@ std::tuple<torch::Tensor, torch::Tensor> binned_select_knn_cpp_op(
     c10::optional<torch::Tensor> n_bins_user,
     int64_t max_bin_dims_user,
     bool torch_compatible_indices,
-    c10::optional<torch::Tensor> bin_coords_user) {
+    c10::optional<torch::Tensor> bin_coords_user,
+    bool use_int32_indices) {
 
     auto result = BinnedKNNAutograd::apply(coords, row_splits, K, direction,
                                           n_bins_user, max_bin_dims_user,
-                                          torch_compatible_indices, bin_coords_user);
+                                          torch_compatible_indices, bin_coords_user,
+                                          use_int32_indices);
     return std::make_tuple(result[0], result[1]);
 }
 
 // Operator Registration
 TORCH_LIBRARY(fastgraphcompute_custom_ops, m) {
-    m.def("binned_select_knn_autograd(Tensor coords, Tensor row_splits, int K, Tensor? direction, Tensor? n_bins, int max_bin_dims, bool torch_compatible_indices, Tensor? bin_coords) -> (Tensor, Tensor)");
+    m.def("binned_select_knn_autograd(Tensor coords, Tensor row_splits, int K, Tensor? direction, Tensor? n_bins, int max_bin_dims, bool torch_compatible_indices, Tensor? bin_coords, bool use_int32_indices) -> (Tensor, Tensor)");
 }
 
 TORCH_LIBRARY_IMPL(fastgraphcompute_custom_ops, Autograd, m) {

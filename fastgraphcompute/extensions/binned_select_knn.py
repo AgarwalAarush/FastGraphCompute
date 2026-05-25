@@ -127,8 +127,11 @@ def binned_select_knn(K: int,
         bin_coords = bin_coords.contiguous()
 
     # Use the C++ autograd kernel
+    # Note: use_int32_indices defaults to False here for ABI compatibility;
+    # the public binned_select_knn / binned_select_knn_pca wrappers expose
+    # the kwarg in commit (d).
     idx, dist = torch.ops.fastgraphcompute_custom_ops.binned_select_knn_autograd(
-        coords, row_splits, K, direction, n_bins, max_bin_dims, torch_compatible_indices, bin_coords)
+        coords, row_splits, K, direction, n_bins, max_bin_dims, torch_compatible_indices, bin_coords, False)
 
     return idx, dist
 
