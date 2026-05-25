@@ -82,9 +82,12 @@ static int local_search_largest_distance(const float* local_dist, int64_t n_neig
 }
 
 
+// Phase 2c: templatize on output-index type so we can emit either int64
+// (canonical) or int32 (opt-in, when n_vert < INT32_MAX).
+template<typename OutIdxT>
 __global__
 static void setDefaults(
-        int64_t *d_indices,
+        OutIdxT *d_indices,
         float *d_dist,
         const bool tf_compat,
         const int64_t n_vert,
@@ -106,12 +109,12 @@ static void setDefaults(
 
     if(n){
         if(tf_compat)
-            d_indices[idx] = i_v;
+            d_indices[idx] = static_cast<OutIdxT>(i_v);
         else
-            d_indices[idx] = -1;
+            d_indices[idx] = static_cast<OutIdxT>(-1);
     }
     else{
-        d_indices[idx] = i_v;
+        d_indices[idx] = static_cast<OutIdxT>(i_v);
     }
     d_dist[idx] = 0;
 
@@ -120,7 +123,7 @@ static void setDefaults(
 
 
 
-template<int N_bin_dims, int K_MAX, typename T>
+template<int N_bin_dims, int K_MAX, typename T, typename OutIdxT = int64_t>
 __global__
 static void select_knn_kernel(
 
@@ -134,7 +137,7 @@ static void select_knn_kernel(
 
         const float* d_bin_width,
 
-        int64_t *d_indices,
+        OutIdxT *d_indices,
         float *d_dist,
 
         const int64_t n_vert,
@@ -271,7 +274,7 @@ static void select_knn_kernel(
     // by setDefaults; unfilled slots (nfilled..n_neigh-1) keep their
     // setDefaults values.
     for(int64_t n=1; n<nfilled; n++){
-        d_indices[I2D(i_v,n,n_neigh)] = local_idx[n];
+        d_indices[I2D(i_v,n,n_neigh)] = static_cast<OutIdxT>(local_idx[n]);
         d_dist[I2D(i_v,n,n_neigh)]    = local_dist[n];
     }
 }
@@ -283,7 +286,7 @@ static void select_knn_kernel(
 // out of registers and the spill cost outweighs the saved global rescans.
 // Algorithmically identical to the local-array kernel; the only
 // difference is *where* the top-K state lives.
-template<int N_bin_dims, typename T>
+template<int N_bin_dims, typename T, typename OutIdxT = int64_t>
 __global__
 static void select_knn_kernel_global(
 
@@ -297,7 +300,7 @@ static void select_knn_kernel_global(
 
         const float* d_bin_width,
 
-        int64_t *d_indices,
+        OutIdxT *d_indices,
         float *d_dist,
 
         const int64_t n_vert,
@@ -385,7 +388,7 @@ static void select_knn_kernel_global(
                     distsq = calculateDistanceLocalChache(coord_i_v,j_v,d_coord,n_coords);
 
                 if(nfilled < n_neigh){
-                    d_indices[I2D(i_v,nfilled,n_neigh)] = j_v;
+                    d_indices[I2D(i_v,nfilled,n_neigh)] = static_cast<OutIdxT>(j_v);
                     d_dist[I2D(i_v,nfilled,n_neigh)] = distsq;
                     if(distsq > maxdistsq){
                         maxdistsq = distsq;
@@ -395,7 +398,7 @@ static void select_knn_kernel_global(
                     continue;
                 }
                 if(distsq < maxdistsq){
-                    d_indices[I2D(i_v,maxidx_local,n_neigh)] = j_v;
+                    d_indices[I2D(i_v,maxidx_local,n_neigh)] = static_cast<OutIdxT>(j_v);
                     d_dist[I2D(i_v,maxidx_local,n_neigh)] = distsq;
                     maxidx_local = searchLargestDistance(i_v,d_dist,n_neigh,maxdistsq);
                 }
@@ -410,7 +413,12 @@ static void select_knn_kernel_global(
 }
 
 
-// Function to dispatch based on input tensor types (int64 or int64)
+// Function to dispatch based on input tensor types (int64 or int64).
+//
+// Phase 2c: optional `output_int32` argument. When true AND n_vert fits
+// in a signed 32-bit int, the returned `indices` tensor is int32 instead
+// of int64 — halves the size of every per-cell index tensor along the
+// pipeline. Default false keeps byte-identical behaviour with v1.1-paper.
 std::tuple<torch::Tensor, torch::Tensor> binned_select_knn_cuda_fn(
     torch::Tensor coordinates,
     torch::Tensor bin_idx,
@@ -421,14 +429,21 @@ std::tuple<torch::Tensor, torch::Tensor> binned_select_knn_cuda_fn(
     torch::Tensor direction,
     bool tf_compat,
     bool use_direction,
-    int64_t K
+    int64_t K,
+    bool output_int32
 ) {
     const auto n_vert = coordinates.size(0);
     const auto n_coords = coordinates.size(1);
     const auto n_bboundaries = bin_boundaries.size(0);
     const auto n_bin_dims = n_bins.size(0);
 
-    auto options_int = torch::TensorOptions().dtype(torch::kInt64).device(coordinates.device());
+    // Phase 2c: pick output dtype. int32 is only safe when n_vert fits
+    // in a *signed* int32 — values stored include vertex IDs in [0, n_vert)
+    // and the sentinel -1 from setDefaults.
+    const bool use_int32 = output_int32 && (n_vert < static_cast<int64_t>(INT32_MAX));
+    auto options_int = torch::TensorOptions()
+        .dtype(use_int32 ? torch::kInt32 : torch::kInt64)
+        .device(coordinates.device());
     auto options_float = torch::TensorOptions().dtype(torch::kFloat32).device(coordinates.device());
 
     torch::Tensor indices = torch::empty({n_vert, K}, options_int);
@@ -437,7 +452,13 @@ std::tuple<torch::Tensor, torch::Tensor> binned_select_knn_cuda_fn(
     grid_and_block gb_set_def(n_vert,256,K,4);
     grid_and_block gb(n_vert,512);
 
-    setDefaults<<<gb_set_def.grid(),gb_set_def.block()>>>(indices.data_ptr<int64_t>(), distances.data_ptr<float>(), tf_compat, n_vert, K);
+    if (use_int32) {
+        setDefaults<int32_t><<<gb_set_def.grid(),gb_set_def.block()>>>(
+            indices.data_ptr<int32_t>(), distances.data_ptr<float>(), tf_compat, n_vert, K);
+    } else {
+        setDefaults<int64_t><<<gb_set_def.grid(),gb_set_def.block()>>>(
+            indices.data_ptr<int64_t>(), distances.data_ptr<float>(), tf_compat, n_vert, K);
+    }
 
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 
@@ -465,33 +486,39 @@ std::tuple<torch::Tensor, torch::Tensor> binned_select_knn_cuda_fn(
     }();
     const bool use_local = !force_global && (K <= 64) && (n_coords <= 7);
 
-#define BSK_LAUNCH_LOCAL(NBD, KM)                                                           \
-    select_knn_kernel<(NBD), (KM), int64_t><<<gb.grid(), gb.block()>>>(                     \
+#define BSK_LAUNCH_LOCAL_T(NBD, KM, OUT_T)                                                  \
+    select_knn_kernel<(NBD), (KM), int64_t, OUT_T><<<gb.grid(), gb.block()>>>(              \
         coordinates.data_ptr<float>(), bin_idx.data_ptr<int64_t>(),                         \
         direction.data_ptr<int64_t>(), dim_bin_idx.data_ptr<int64_t>(),                     \
         bin_boundaries.data_ptr<int64_t>(), n_bins.data_ptr<int64_t>(),                     \
-        bin_width.data_ptr<float>(), indices.data_ptr<int64_t>(),                           \
+        bin_width.data_ptr<float>(), indices.data_ptr<OUT_T>(),                             \
         distances.data_ptr<float>(), n_vert, K, n_coords, n_bin_dims, n_bboundaries,        \
         use_direction)
 
-#define BSK_LAUNCH_GLOBAL(NBD)                                                              \
-    select_knn_kernel_global<(NBD), int64_t><<<gb.grid(), gb.block()>>>(                    \
+#define BSK_LAUNCH_GLOBAL_T(NBD, OUT_T)                                                     \
+    select_knn_kernel_global<(NBD), int64_t, OUT_T><<<gb.grid(), gb.block()>>>(             \
         coordinates.data_ptr<float>(), bin_idx.data_ptr<int64_t>(),                         \
         direction.data_ptr<int64_t>(), dim_bin_idx.data_ptr<int64_t>(),                     \
         bin_boundaries.data_ptr<int64_t>(), n_bins.data_ptr<int64_t>(),                     \
-        bin_width.data_ptr<float>(), indices.data_ptr<int64_t>(),                           \
+        bin_width.data_ptr<float>(), indices.data_ptr<OUT_T>(),                             \
         distances.data_ptr<float>(), n_vert, K, n_coords, n_bin_dims, n_bboundaries,        \
         use_direction)
+
+#define BSK_DISPATCH_T(NBD, OUT_T)                                                          \
+    do {                                                                                    \
+        if (use_local) {                                                                    \
+            if      (K <= 16) { BSK_LAUNCH_LOCAL_T(NBD, 16, OUT_T); }                       \
+            else if (K <= 32) { BSK_LAUNCH_LOCAL_T(NBD, 32, OUT_T); }                       \
+            else              { BSK_LAUNCH_LOCAL_T(NBD, 64, OUT_T); }                       \
+        } else {                                                                            \
+            BSK_LAUNCH_GLOBAL_T(NBD, OUT_T);                                                \
+        }                                                                                   \
+    } while(0)
 
 #define BSK_DISPATCH(NBD)                                                                   \
     do {                                                                                    \
-        if (use_local) {                                                                    \
-            if      (K <= 16) { BSK_LAUNCH_LOCAL(NBD, 16); }                                \
-            else if (K <= 32) { BSK_LAUNCH_LOCAL(NBD, 32); }                                \
-            else              { BSK_LAUNCH_LOCAL(NBD, 64); }                                \
-        } else {                                                                            \
-            BSK_LAUNCH_GLOBAL(NBD);                                                         \
-        }                                                                                   \
+        if (use_int32) { BSK_DISPATCH_T(NBD, int32_t); }                                    \
+        else           { BSK_DISPATCH_T(NBD, int64_t); }                                    \
     } while(0)
 
     if      (n_bin_dims == 2) BSK_DISPATCH(2);
@@ -501,8 +528,9 @@ std::tuple<torch::Tensor, torch::Tensor> binned_select_knn_cuda_fn(
     else throw std::invalid_argument("Unsupported number of binning dimensions.");
 
 #undef BSK_DISPATCH
-#undef BSK_LAUNCH_GLOBAL
-#undef BSK_LAUNCH_LOCAL
+#undef BSK_DISPATCH_T
+#undef BSK_LAUNCH_GLOBAL_T
+#undef BSK_LAUNCH_LOCAL_T
 
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 

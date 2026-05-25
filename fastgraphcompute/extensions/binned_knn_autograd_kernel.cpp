@@ -23,7 +23,8 @@ std::tuple<torch::Tensor, torch::Tensor> binned_select_knn_cuda_fn(
     torch::Tensor direction,
     bool tf_compat,
     bool use_direction,
-    int64_t K);
+    int64_t K,
+    bool output_int32);
 
 std::tuple<torch::Tensor, torch::Tensor> binned_select_knn_cpu(
     torch::Tensor coordinates,
@@ -174,13 +175,17 @@ struct BinnedKNNAutograd : public torch::autograd::Function<BinnedKNNAutograd> {
             make_contiguous_on_device(kernel_device, scoords, sbinning.to(torch::kInt64), sdbinning.to(torch::kInt64),
                                      bin_boundaries.to(torch::kInt64), nb.to(torch::kInt64), bin_width, sdirection.value());
 
-        // Call KNN kernel directly based on device type
+        // Call KNN kernel directly based on device type.
+        // Phase 2c: default-path always passes output_int32=false so the
+        // returned indices remain int64 (byte-identical to v1.1-paper).
+        // The opt-in path is wired in a later commit.
         std::tuple<torch::Tensor, torch::Tensor> knn_result;
         if (k_scoords.device().is_cuda()) {
             knn_result = binned_select_knn_cuda_fn(
                 k_scoords, k_sbinning, k_sdbinning, k_bin_boundaries,
                 k_n_bins, k_bin_width, k_direction,
-                torch_compatible_indices, use_direction, K);
+                torch_compatible_indices, use_direction, K,
+                /*output_int32=*/false);
         } else {
             knn_result = binned_select_knn_cpu(
                 k_scoords, k_sbinning, k_sdbinning, k_bin_boundaries,
