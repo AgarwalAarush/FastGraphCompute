@@ -83,6 +83,7 @@ binned_knn_ops_cuda_sources = [
     'fastgraphcompute/extensions/index_replacer.cpp',
     'fastgraphcompute/extensions/index_replacer_cpu.cpp',
     'fastgraphcompute/extensions/index_replacer_cuda_kernel.cu',
+    'fastgraphcompute/extensions/index_replacer_scatter_cuda_kernel.cu',
     'fastgraphcompute/extensions/binned_select_knn_grad.cpp',
     'fastgraphcompute/extensions/binned_select_knn_grad_cpu.cpp',
     'fastgraphcompute/extensions/binned_select_knn_grad_cuda_kernel.cu',

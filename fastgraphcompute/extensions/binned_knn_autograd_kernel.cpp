@@ -45,6 +45,12 @@ torch::Tensor index_replacer_cpu_fn(
     torch::Tensor to_be_replaced,
     torch::Tensor replacements);
 
+// Phase 2b: fused replace+scatter on CUDA (avoids the idx_unsorted
+// intermediate). See index_replacer_scatter_cuda_kernel.cu.
+torch::Tensor index_replacer_scatter_cuda_fn(
+    torch::Tensor idx_sorted,
+    torch::Tensor sorting_indices);
+
 torch::Tensor binned_select_knn_grad_cuda_fn(
     torch::Tensor grad_distances,
     torch::Tensor indices,
@@ -185,28 +191,34 @@ struct BinnedKNNAutograd : public torch::autograd::Function<BinnedKNNAutograd> {
         auto idx_sorted = std::get<0>(knn_result);
         auto dist_sorted = std::get<1>(knn_result);
 
-        // Replace indices to original order - call function directly
-        torch::Tensor idx_unsorted;
-        if (idx_sorted.numel() > 0) {
-            if (idx_sorted.device().is_cuda()) {
-                idx_unsorted = index_replacer_cuda_fn(idx_sorted, sorting_indices.to(torch::kInt64));
-            } else {
-                idx_unsorted = index_replacer_cpu_fn(idx_sorted, sorting_indices.to(torch::kInt64));
-            }
-        } else {
-            idx_unsorted = torch::empty_like(idx_sorted);
-        }
-
-        // Scatter results back to original order
+        // Scatter dist results back to original order (allocate idx_final
+        // via the fused replace+scatter on CUDA, or the two-step on CPU).
         auto sorting_indices_long = sorting_indices; // already int64
         auto dist_final = torch::empty_like(dist_sorted, dist_sorted.options().device(original_device));
-        auto idx_final = torch::empty_like(idx_unsorted, idx_unsorted.options().device(original_device));
-
         if (dist_sorted.numel() > 0) {
             dist_final.scatter_(static_cast<int64_t>(0), sorting_indices_long.unsqueeze(-1).expand_as(dist_sorted), dist_sorted);
         }
-        if (idx_unsorted.numel() > 0) {
-            idx_final.scatter_(static_cast<int64_t>(0), sorting_indices_long.unsqueeze(-1).expand_as(idx_unsorted), idx_unsorted);
+
+        // Phase 2b: fused replace+scatter to eliminate the idx_unsorted
+        // intermediate (which previously coexisted with idx_final, doubling
+        // the N*k*8-byte peak for the index tensor). On CUDA the fused
+        // kernel writes directly into idx_final; on CPU we fall back to the
+        // original two-step (CPU memory pressure is not a concern here).
+        torch::Tensor idx_final;
+        if (idx_sorted.numel() == 0) {
+            idx_final = torch::empty_like(idx_sorted, idx_sorted.options().device(original_device));
+        } else if (idx_sorted.device().is_cuda()) {
+            // Fused: one allocation, one kernel.
+            idx_final = index_replacer_scatter_cuda_fn(idx_sorted, sorting_indices_long);
+            if (idx_final.device() != original_device) {
+                idx_final = idx_final.to(original_device);
+            }
+        } else {
+            auto idx_unsorted = index_replacer_cpu_fn(idx_sorted, sorting_indices.to(torch::kInt64));
+            idx_final = torch::empty_like(idx_unsorted, idx_unsorted.options().device(original_device));
+            if (idx_unsorted.numel() > 0) {
+                idx_final.scatter_(static_cast<int64_t>(0), sorting_indices_long.unsqueeze(-1).expand_as(idx_unsorted), idx_unsorted);
+            }
         }
 
         // Phase 2a: only save for backward when autograd actually needs it.
