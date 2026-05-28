@@ -1,6 +1,8 @@
 #include <torch/extension.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAGuard.h>
 
 #define CHECK_CUDA(x) TORCH_CHECK(x.device().is_cuda(), #x " must be a CUDA tensor")
 
@@ -33,22 +35,23 @@ torch::Tensor index_replacer_cuda_fn(
     CHECK_CUDA(replacements);
     TORCH_CHECK(to_be_replaced.dtype() == torch::kInt64, "Input tensor must be int64");
     TORCH_CHECK(replacements.dtype() == torch::kInt64, "Replacement tensor must be int64");
+    const c10::cuda::CUDAGuard device_guard(to_be_replaced.device());
 
     auto replaced = torch::empty_like(to_be_replaced);
 
     const int64_t n_to_be_replaced = to_be_replaced.numel();
     const int64_t threads_per_block = 1024;
     const int64_t num_blocks = (n_to_be_replaced + threads_per_block - 1) / threads_per_block;
+    auto stream = at::cuda::getCurrentCUDAStream();
 
-    index_replacer_kernel<<<num_blocks, threads_per_block>>>(
+    index_replacer_kernel<<<num_blocks, threads_per_block, 0, stream.stream()>>>(
         to_be_replaced.data_ptr<int64_t>(),
         replacements.data_ptr<int64_t>(),
         replaced.data_ptr<int64_t>(),
         n_to_be_replaced,
         replacements.numel()
     );
-
-    cudaDeviceSynchronize();
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
 
     return replaced;
 }

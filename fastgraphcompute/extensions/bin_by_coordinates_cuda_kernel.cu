@@ -5,6 +5,8 @@
 #include "cuda_helpers.h"
 #include "helpers.h"
 #include <c10/macros/Macros.h>
+#include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAGuard.h>
 
 #define CHECK_CUDA(x) TORCH_CHECK(x.device().is_cuda(), #x " must be a CUDA tensor")
 #define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")
@@ -136,6 +138,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> bin_by_coordinates_cuda_
 
     // Check if n_coords is equal to nbins.size(0)
     TORCH_CHECK(n_coords == nbins.size(0), "bin_by_coordinates_cuda: coordinates.size(1) must be equal to nbins.size(0)");
+    const c10::cuda::CUDAGuard device_guard(coordinates.device());
 
     const auto n_total_bins = nbins.to(torch::kCPU).prod().item<int64_t>() * (n_rs - 1);
     
@@ -144,8 +147,9 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> bin_by_coordinates_cuda_
     auto output_flat_assigned_bin_tensor = torch::zeros({ n_vert }, torch::TensorOptions().dtype(torch::kInt64).device(coordinates.device()));
 
     grid_and_block gb(n_vert,512);
+    auto stream = at::cuda::getCurrentCUDAStream();
 
-    calc<<<gb.grid(),gb.block()>>>(
+    calc<<<gb.grid(),gb.block(), 0, stream.stream()>>>(
         coordinates.data_ptr<float>(),
         row_splits.data_ptr<int64_t>(),
         bin_width.data_ptr<float>(),

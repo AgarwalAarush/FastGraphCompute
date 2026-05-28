@@ -8,6 +8,8 @@
 #include <string>
 #include <cstdlib>
 #include <c10/macros/Macros.h>
+#include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAGuard.h>
 
 #define C10_CUDA_KERNEL_LAUNCH_CHECK() {                         \
     cudaError_t err = cudaGetLastError();                        \
@@ -427,6 +429,7 @@ std::tuple<torch::Tensor, torch::Tensor> binned_select_knn_cuda_fn(
     const auto n_coords = coordinates.size(1);
     const auto n_bboundaries = bin_boundaries.size(0);
     const auto n_bin_dims = n_bins.size(0);
+    const c10::cuda::CUDAGuard device_guard(coordinates.device());
 
     auto options_int = torch::TensorOptions().dtype(torch::kInt64).device(coordinates.device());
     auto options_float = torch::TensorOptions().dtype(torch::kFloat32).device(coordinates.device());
@@ -436,8 +439,9 @@ std::tuple<torch::Tensor, torch::Tensor> binned_select_knn_cuda_fn(
 
     grid_and_block gb_set_def(n_vert,256,K,4);
     grid_and_block gb(n_vert,512);
+    auto stream = at::cuda::getCurrentCUDAStream();
 
-    setDefaults<<<gb_set_def.grid(),gb_set_def.block()>>>(indices.data_ptr<int64_t>(), distances.data_ptr<float>(), tf_compat, n_vert, K);
+    setDefaults<<<gb_set_def.grid(),gb_set_def.block(), 0, stream.stream()>>>(indices.data_ptr<int64_t>(), distances.data_ptr<float>(), tf_compat, n_vert, K);
 
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 
@@ -466,7 +470,7 @@ std::tuple<torch::Tensor, torch::Tensor> binned_select_knn_cuda_fn(
     const bool use_local = !force_global && (K <= 64) && (n_coords <= 7);
 
 #define BSK_LAUNCH_LOCAL(NBD, KM)                                                           \
-    select_knn_kernel<(NBD), (KM), int64_t><<<gb.grid(), gb.block()>>>(                     \
+    select_knn_kernel<(NBD), (KM), int64_t><<<gb.grid(), gb.block(), 0, stream.stream()>>>( \
         coordinates.data_ptr<float>(), bin_idx.data_ptr<int64_t>(),                         \
         direction.data_ptr<int64_t>(), dim_bin_idx.data_ptr<int64_t>(),                     \
         bin_boundaries.data_ptr<int64_t>(), n_bins.data_ptr<int64_t>(),                     \
@@ -475,7 +479,7 @@ std::tuple<torch::Tensor, torch::Tensor> binned_select_knn_cuda_fn(
         use_direction)
 
 #define BSK_LAUNCH_GLOBAL(NBD)                                                              \
-    select_knn_kernel_global<(NBD), int64_t><<<gb.grid(), gb.block()>>>(                    \
+    select_knn_kernel_global<(NBD), int64_t><<<gb.grid(), gb.block(), 0, stream.stream()>>>(\
         coordinates.data_ptr<float>(), bin_idx.data_ptr<int64_t>(),                         \
         direction.data_ptr<int64_t>(), dim_bin_idx.data_ptr<int64_t>(),                     \
         bin_boundaries.data_ptr<int64_t>(), n_bins.data_ptr<int64_t>(),                     \
