@@ -2,7 +2,7 @@ import torch
 from typing import Tuple
 
 #import the custom operations
-from . import binned_select_knn
+from . import binned_select_knn, binned_select_knn_pca
 from . import select_with_default
 
 # @torch.jit.script
@@ -21,6 +21,10 @@ class GravNetOp(torch.nn.Module):
         output_activation (torch.nn.Module, optional): Activation function applied to the output layer.
                                                         Defaults to ReLU.
         optimization_arguments (dict, optional): Additional arguments for optimizing the k-NN selection.
+        use_pca (bool, optional): Use PCA-subspace binning for neighbor selection.
+                                  Defaults to False for backwards and TorchScript compatibility.
+        max_bin_dims (int, optional): Number of PCA binning dimensions. Defaults to 3.
+        pca_subsample (int, optional): Maximum points used to estimate PCA. Defaults to 50000.
 
     Attributes:
         space_transformations (torch.nn.Linear): Linear layer to project input features into a lower-dimensional
@@ -44,7 +48,10 @@ class GravNetOp(torch.nn.Module):
                  propagate_dimensions,
                  k,
                  output_activation=torch.nn.ReLU(),
-                 optimization_arguments: dict = {}):
+                 optimization_arguments: dict = {},
+                 use_pca: bool = False,
+                 max_bin_dims: int = 3,
+                 pca_subsample: int = 50000):
         
         super(GravNetOp, self).__init__()
 
@@ -62,6 +69,24 @@ class GravNetOp(torch.nn.Module):
 
         # Store optimization arguments for neighbor selection
         self.optimization_arguments = optimization_arguments
+        self.use_pca = use_pca
+        self.max_bin_dims = max_bin_dims
+        self.pca_subsample = pca_subsample
+
+    @torch.jit.unused
+    def _pca_neighbors(self, space: torch.Tensor, row_splits: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Run PCA-subspace kNN in eager mode.
+
+        PCA estimation uses ``torch.pca_lowrank``, which is not available in
+        the scripted path. The default axis-aligned path remains scriptable.
+        """
+        return binned_select_knn_pca(
+            self.k,
+            space,
+            row_splits,
+            max_bin_dims=self.max_bin_dims,
+            pca_subsample=self.pca_subsample,
+        )
 
     def forward(self, x : torch.Tensor, row_splits : torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
@@ -84,7 +109,11 @@ class GravNetOp(torch.nn.Module):
         # Step 3: Determine the k-nearest neighbors based on the learned space
         # neighbor_idx: Indices of k-nearest neighbors
         # distsq: Squared distances to k-nearest neighbors
-        neighbor_idx, distsq = binned_select_knn(self.k, space.contiguous(), row_splits) #, **self.optimization_arguments)
+        space = space.contiguous()
+        if self.use_pca:
+            neighbor_idx, distsq = self._pca_neighbors(space, row_splits)
+        else:
+            neighbor_idx, distsq = binned_select_knn(self.k, space, row_splits)
 
         # Step 4: Compute weights based on distances (using a Gaussian kernel)
         weights = torch.exp(-10. * distsq)  # B x K
