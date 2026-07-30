@@ -1,6 +1,7 @@
 import unittest
 import torch
 import io
+from unittest.mock import patch
 from fastgraphcompute.gnn_ops import GravNetOp
 
 
@@ -25,6 +26,40 @@ class SimpleGravNetModel(torch.nn.Module):
         return x
 
 class TestGravNetOp(unittest.TestCase):
+
+    def test_pca_neighbor_dispatch(self):
+        n, in_dim, prop_dim, space_dim, k = 12, 8, 6, 5, 4
+        op = GravNetOp(
+            in_channels=in_dim,
+            out_channels=prop_dim,
+            space_dimensions=space_dim,
+            propagate_dimensions=prop_dim,
+            k=k,
+            use_pca=True,
+            max_bin_dims=3,
+            pca_subsample=128,
+        )
+        x = torch.randn(n, in_dim)
+        row_splits = torch.tensor([0, n], dtype=torch.int64)
+        neighbor_idx = torch.arange(n).view(n, 1).expand(n, k).contiguous()
+        distsq = torch.zeros(n, k)
+
+        def select_neighbors(indices, values, default):
+            return values[indices]
+
+        with patch("fastgraphcompute.gnn_ops.binned_select_knn_pca",
+                   return_value=(neighbor_idx, distsq)) as pca_knn, \
+             patch("fastgraphcompute.gnn_ops.select_with_default",
+                   side_effect=select_neighbors):
+            output, returned_idx, returned_dist, _ = op(x, row_splits)
+
+        self.assertEqual(output.shape, (n, prop_dim))
+        self.assertTrue(torch.equal(returned_idx, neighbor_idx))
+        self.assertTrue(torch.equal(returned_dist, distsq))
+        pca_knn.assert_called_once()
+        _, kwargs = pca_knn.call_args
+        self.assertEqual(kwargs["max_bin_dims"], 3)
+        self.assertEqual(kwargs["pca_subsample"], 128)
 
     def test_jit_script_compatibility(self):
         device = 'cuda' if torch.cuda.is_available() else 'cpu'

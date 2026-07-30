@@ -51,7 +51,15 @@ Located in `fastgraphcompute/gnn_ops.py`, the `GravNetOp` implements a layer of 
 import torch
 from fastgraphcompute.gnn_ops import GravNetOp
 
-model = GravNetOp(in_channels=8, out_channels=16, space_dimensions=4, propagate_dimensions=8, k=20)
+model = GravNetOp(
+    in_channels=8,
+    out_channels=16,
+    space_dimensions=4,
+    propagate_dimensions=8,
+    k=20,
+    use_pca=True,
+    max_bin_dims=3,
+)
 input_tensor = torch.rand(32, 8)
 # row split format, cutting the 32 x 8 array into individual samples / events
 # one with 18 entries, one with 14 entries. 
@@ -59,6 +67,10 @@ row_splits = torch.tensor([0, 18, 32], dtype=torch.int32)
 output, neighbor_idx, distsq, S_space = model(input_tensor, row_splits)
 print(output.shape)  # Expected output: (32, 16)
 ```
+
+`use_pca=True` enables exact PCA-subspace binning in eager mode. Leave it at
+the backwards-compatible default (`False`) when scripting `GravNetOp` with
+TorchScript; PCA estimation currently relies on eager-only `torch.pca_lowrank`.
 
 ### Object Condensation Loss
 Defined in `fastgraphcompute/object_condensation.py`, this module implements the object condensation loss [arXiv:2002.03605].
@@ -144,4 +156,3 @@ This project is licensed under the MIT License. See `LICENSE` for details.
 
 ## Acknowledgments
 FastGraphCompute is developed as part of research efforts in graph-based deep learning. Contributions are welcome!
-
