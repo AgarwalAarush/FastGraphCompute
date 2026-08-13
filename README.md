@@ -1,6 +1,10 @@
 # FastGraphCompute
 
-FastGraphCompute is a high-performance extension for PyTorch designed to accelerate graph-based operations. It provides custom CUDA extensions for efficient computation in Graph Neural Networks (GNNs). The algorithms in this repository will be accompanied by a paper soon. Please leave room to cite it if you use this code.
+FastGraphCompute is a high-performance PyTorch extension for graph-based
+operations in geometric neural networks. It provides custom CUDA extensions
+and the exact PCA-subspace binned kNN implementation evaluated in the
+accompanying paper. Please cite the software and paper as described in
+`CITATION.cff`.
 
 ## Installation
 
@@ -29,12 +33,12 @@ pip install torch_geometric pyg_lib torch_scatter torch_sparse torch_cluster tor
 
 You can install FastGraphCompute directly from GitHub:
 ```bash
-pip install git+https://github.com/jkiesele/FastGraphCompute
+pip install git+https://github.com/AgarwalAarush/FastGraphCompute@pca-fgc-paper-v1.0.0
 ```
 
 Alternatively, if developing locally, clone the repository and install:
 ```bash
-git clone https://github.com/jkiesele/FastGraphCompute.git
+git clone https://github.com/AgarwalAarush/FastGraphCompute.git
 cd FastGraphCompute
 pip install .
 ```
@@ -124,7 +128,7 @@ These extensions compile automatically during installation and are accessible vi
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/jkiesele/FastGraphCompute.git
+   git clone https://github.com/AgarwalAarush/FastGraphCompute.git
    cd FastGraphCompute
    ```
 
