@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import unittest
-import torch
+from pathlib import Path
 from fastgraphcompute import oc_helper_matrices, select_with_default
 
 
@@ -211,10 +211,11 @@ class TestOcHelper(unittest.TestCase):
         M, M_not, _ = oc_helper_matrices(asso_indices, row_splits)
 
         # load the expected ones
+        fixture_dir = Path(__file__).parent
         M_exp = torch.tensor(
-            np.load("test_oc_helper_large_M.npy"), dtype=torch.int64, device=device)
+            np.load(fixture_dir / "test_oc_helper_large_M.npy"), dtype=torch.int64, device=device)
         M_not_exp = torch.tensor(
-            np.load("test_oc_helper_large_M_not.npy"), dtype=torch.int64, device=device)
+            np.load(fixture_dir / "test_oc_helper_large_M_not.npy"), dtype=torch.int64, device=device)
 
         # sort all of them
         M_sorted, M_not_sorted = self.sort_matrices(M, M_not)
