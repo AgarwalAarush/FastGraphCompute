@@ -13,6 +13,9 @@ jkiesele
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include "cuda_helpers.h"
+#include <c10/cuda/CUDAStream.h>
+#include <c10/cuda/CUDAException.h>
+#include <c10/cuda/CUDAGuard.h>
 
 template <typename T>
 __global__
@@ -49,29 +52,27 @@ static void calc_m(
             printf("Error: end_vertex - start_vertex %lld is larger than n_maxrs %lld, setting end_vertex to start_vertex + n_maxrs . Check inputs!\n", end_vertex - start_vertex, n_maxrs);
             end_vertex = start_vertex + n_maxrs;
         }
-        //synch threads here, now everything is same for all threads
-        __syncthreads();
         // Fill M
         int64_t fill_counter = 0;
         for(int64_t i_v = start_vertex + tid; i_v < end_vertex; i_v++ ){
             if(asso_idx[i_v] == uqidx){
-                M[I2D(fill_counter, k, n_unique)] = i_v;
-                fill_counter++;
-                if(fill_counter > n_maxuq){
-                    printf("Error: fill_counter %lld is larger than n_maxuq in first M loop %lld . Check inputs!\n", fill_counter, n_maxuq);
+                if(fill_counter >= n_maxuq){
+                    printf("Error: fill_counter %lld is larger than or equal to n_maxuq in first M loop %lld. Check inputs!\n", fill_counter, n_maxuq);
                     break;
                 }
+                M[I2D(fill_counter, k, n_unique)] = i_v;
+                fill_counter++;
             }
         }
         //fill rest, might diverge but that's ok
         for(int64_t i_v = start_vertex; i_v < start_vertex + tid; i_v++ ){
             if(i_v < end_vertex && asso_idx[i_v] == uqidx){
-                M[I2D(fill_counter, k, n_unique)] = i_v;
-                fill_counter++;
-                if(fill_counter > n_maxuq){
-                    printf("Error: fill_counter %lld is larger than n_maxuq in second M loop %lld . Check inputs!\n", fill_counter, n_maxuq);
+                if(fill_counter >= n_maxuq){
+                    printf("Error: fill_counter %lld is larger than or equal to n_maxuq in second M loop %lld. Check inputs!\n", fill_counter, n_maxuq);
                     break;
                 }
+                M[I2D(fill_counter, k, n_unique)] = i_v;
+                fill_counter++;
             }
         }
 
@@ -81,35 +82,32 @@ static void calc_m(
         }
         // Fill M_not
         if(calc_m_not){
-            //synch threads here, now everything is same for all threads
-            __syncthreads();
             fill_counter = 0;
             for(int64_t i_v = start_vertex + tid; i_v < end_vertex; i_v++ ){
                 if (asso_idx[i_v] != uqidx){
-                    M_not[I2D(fill_counter, k, n_unique)] = i_v;
-                    fill_counter++;
-                    if(fill_counter > n_maxrs){
-                        printf("Error: fill_counter %lld is larger than n_maxrs in first M_not loop %lld . Check inputs!\n", fill_counter, n_maxuq);
+                    if(fill_counter >= n_maxrs){
+                        printf("Error: fill_counter %lld is larger than or equal to n_maxrs in first M_not loop %lld. Check inputs!\n", fill_counter, n_maxrs);
                         break;
                     }
+                    M_not[I2D(fill_counter, k, n_unique)] = i_v;
+                    fill_counter++;
                 }
             }
             //fill rest, might diverge but that's ok
             for(int64_t i_v = start_vertex; i_v < start_vertex + tid; i_v++ ){
                 if (i_v < end_vertex && asso_idx[i_v] != uqidx){
-                    M_not[I2D(fill_counter, k, n_unique)] = i_v;
-                    fill_counter++;
-                    if(fill_counter > n_maxrs){
-                        printf("Error: fill_counter %lld is larger than n_maxrs in first M_not loop %lld . Check inputs!\n", fill_counter, n_maxuq);
+                    if(fill_counter >= n_maxrs){
+                        printf("Error: fill_counter %lld is larger than or equal to n_maxrs in second M_not loop %lld. Check inputs!\n", fill_counter, n_maxrs);
                         break;
                     }
+                    M_not[I2D(fill_counter, k, n_unique)] = i_v;
+                    fill_counter++;
                 }
             }
             for(; fill_counter < n_maxrs; fill_counter++){
                 M_not[I2D(fill_counter, k, n_unique)] = -1;
             }
         }
-        __syncthreads(); //make sure all end at the same time
 }
 
 static void check_all_inputs(
@@ -157,6 +155,8 @@ std::tuple<torch::Tensor, torch::Tensor> oc_helper_cuda_fn(
     bool calc_m_not) {
 
     check_all_inputs(asso_idx, unique_idx, unique_rs_asso, rs, max_n_unique_over_splits, max_n_in_splits);
+    TORCH_CHECK(asso_idx.is_cuda(), "asso_idx must be a CUDA tensor");
+    c10::cuda::CUDAGuard guard(asso_idx.device());
 
     const auto n_vert = asso_idx.size(0);
     const auto n_unique = unique_idx.size(0);
@@ -168,11 +168,14 @@ std::tuple<torch::Tensor, torch::Tensor> oc_helper_cuda_fn(
     auto n_maxrs = max_n_in_splits.cpu().data_ptr<int64_t>()[0];
 
     torch::Tensor M_transposed = torch::empty({n_maxuq, n_unique}, options_int);
-    torch::Tensor M_not_transposed = torch::empty({n_maxrs, n_unique}, options_int);
+    torch::Tensor M_not_transposed = calc_m_not
+        ? torch::full({n_maxrs, n_unique}, -1, options_int)
+        : torch::empty({0, 0}, options_int);
 
     grid_and_block gb(n_unique, 512);
+    auto stream = c10::cuda::getCurrentCUDAStream(asso_idx.device().index());
 
-    calc_m<int64_t><<<gb.grid(), gb.block()>>>(
+    calc_m<int64_t><<<gb.grid(), gb.block(), 0, stream.stream()>>>(
         asso_idx.data_ptr<int64_t>(),
         unique_idx.data_ptr<int64_t>(),
         unique_rs_asso.data_ptr<int64_t>(),
@@ -186,8 +189,7 @@ std::tuple<torch::Tensor, torch::Tensor> oc_helper_cuda_fn(
         calc_m_not
     );
 
-    cudaDeviceSynchronize();
-    TORCH_CHECK(cudaGetLastError() == cudaSuccess, "CUDA error in kernel execution");
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
 
     torch::Tensor M = M_transposed.transpose(0, 1).contiguous();//ensure contiguous
     torch::Tensor M_not = M_not_transposed.transpose(0, 1).contiguous();

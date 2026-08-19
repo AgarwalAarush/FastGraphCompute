@@ -5,19 +5,12 @@
 #include "cuda_helpers.h"
 #include "helpers.h"
 #include <c10/macros/Macros.h>
+#include <c10/cuda/CUDAStream.h>
+#include <c10/cuda/CUDAGuard.h>
 
 #define CHECK_CUDA(x) TORCH_CHECK(x.device().is_cuda(), #x " must be a CUDA tensor")
 #define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")
 #define CHECK_INPUT(x) CHECK_CUDA(x); CHECK_CONTIGUOUS(x)
-
-#define C10_CUDA_KERNEL_LAUNCH_CHECK() {                         \
-    cudaError_t err = cudaGetLastError();                        \
-    if (err != cudaSuccess) {                                    \
-        printf("CUDA Kernel launch error: %s\n",                 \
-               cudaGetErrorString(err));                         \
-        exit(EXIT_FAILURE);                                      \
-    }                                                            \
-}
 
 __global__
 void calc(
@@ -126,6 +119,14 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> bin_by_coordinates_cuda_
     CHECK_INPUT(bin_width);
     CHECK_INPUT(nbins);
 
+    TORCH_CHECK(row_splits.device() == coordinates.device(),
+                "row_splits must be on the same device as coordinates");
+    TORCH_CHECK(bin_width.device() == coordinates.device(),
+                "bin_width must be on the same device as coordinates");
+    TORCH_CHECK(nbins.device() == coordinates.device(),
+                "nbins must be on the same device as coordinates");
+    c10::cuda::CUDAGuard guard(coordinates.device());
+
     const auto n_vert = coordinates.size(0);
     const auto n_coords = coordinates.size(1);
     const auto n_rs = row_splits.size(0);
@@ -144,8 +145,9 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> bin_by_coordinates_cuda_
     auto output_flat_assigned_bin_tensor = torch::zeros({ n_vert }, torch::TensorOptions().dtype(torch::kInt64).device(coordinates.device()));
 
     grid_and_block gb(n_vert,512);
+    auto stream = c10::cuda::getCurrentCUDAStream(coordinates.device().index());
 
-    calc<<<gb.grid(),gb.block()>>>(
+    calc<<<gb.grid(),gb.block(),0,stream.stream()>>>(
         coordinates.data_ptr<float>(),
         row_splits.data_ptr<int64_t>(),
         bin_width.data_ptr<float>(),

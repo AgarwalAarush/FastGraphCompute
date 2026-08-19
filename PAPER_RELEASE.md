@@ -1,8 +1,10 @@
 # PCA-FastGraph Paper Release
 
-The `pca-fgc-paper-v1.1.0` tag is the clean public release associated with
-the FastGraph paper. The earlier `v1.0.1` tag remains immutable as the
-original paper audit record.
+The `pca-fgc-paper-v1.2.0` tag is the hardened public release associated
+with the FastGraph paper. It reports package version `1.2.0` and includes
+current-stream launches, CUDA device guards and validation, and Object
+Condensation bounds fixes. The earlier `v1.0.1` and `v1.1.0` tags remain
+immutable audit records.
 
 ## Public Components
 
@@ -16,5 +18,5 @@ The PCA path is opt-in through `GravNetOp(..., use_pca=True)` in eager mode.
 It evaluates candidate distances in the original coordinate space and is
 exact under the paper's distance convention.
 
-For the pending post-paper hardening work, see
+The upstream changes incorporated into this release are recorded in
 [UPSTREAM_SYNC_ASSESSMENT.md](UPSTREAM_SYNC_ASSESSMENT.md).

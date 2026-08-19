@@ -15,6 +15,9 @@
 #include <torch/extension.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include <c10/cuda/CUDAStream.h>
+#include <c10/cuda/CUDAException.h>
+#include <c10/cuda/CUDAGuard.h>
 
 #define CHECK_CUDA(x) TORCH_CHECK(x.device().is_cuda(), #x " must be a CUDA tensor")
 
@@ -55,6 +58,10 @@ torch::Tensor index_replacer_scatter_cuda_fn(
 ) {
     CHECK_CUDA(idx_sorted);
     CHECK_CUDA(sorting_indices);
+    TORCH_CHECK(sorting_indices.device() == idx_sorted.device(),
+                "sorting_indices must be on the same device as idx_sorted");
+    c10::cuda::CUDAGuard guard(idx_sorted.device());
+
     TORCH_CHECK(idx_sorted.dtype() == torch::kInt64, "idx_sorted must be int64");
     TORCH_CHECK(sorting_indices.dtype() == torch::kInt64, "sorting_indices must be int64");
     TORCH_CHECK(idx_sorted.dim() == 2, "idx_sorted must be 2D [N, k]");
@@ -72,13 +79,13 @@ torch::Tensor index_replacer_scatter_cuda_fn(
 
     const int64_t threads_per_block = 1024;
     const int64_t num_blocks = (total + threads_per_block - 1) / threads_per_block;
-    index_replacer_scatter_kernel<<<num_blocks, threads_per_block>>>(
+    auto stream = c10::cuda::getCurrentCUDAStream(idx_sorted.device().index());
+    index_replacer_scatter_kernel<<<num_blocks, threads_per_block, 0, stream.stream()>>>(
         idx_sorted.data_ptr<int64_t>(),
         sorting_indices.data_ptr<int64_t>(),
         idx_final.data_ptr<int64_t>(),
         N, k
     );
-    // Note: no explicit cudaDeviceSynchronize here; the caller synchronizes
-    // before reading idx_final.
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
     return idx_final;
 }

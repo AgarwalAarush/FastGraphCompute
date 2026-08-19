@@ -43,12 +43,12 @@ static void calc_m(
             int64_t fill_counter = 0;
             for(int64_t i_v = start_vertex; i_v < end_vertex; i_v++ ){
                 if(asso_idx[i_v] == uqidx){
-                    M[I2D(fill_counter, k, n_unique)] = i_v;
-                    fill_counter++;
-                    if(fill_counter > n_maxuq){
-                        TORCH_WARN("fill_counter ", fill_counter, " is larger than n_maxuq ", n_maxuq, ", breaking.");
+                    if(fill_counter >= n_maxuq){
+                        TORCH_WARN("fill_counter ", fill_counter, " is larger than or equal to n_maxuq ", n_maxuq, ", breaking.");
                         break;
                     }
+                    M[I2D(fill_counter, k, n_unique)] = i_v;
+                    fill_counter++;
                 }
             }
 
@@ -62,12 +62,12 @@ static void calc_m(
                 fill_counter = 0;
                 for(int64_t i_v = start_vertex; i_v < end_vertex; i_v++ ){
                     if (asso_idx[i_v] != uqidx){
-                        M_not[I2D(fill_counter, k, n_unique)] = i_v;
-                        fill_counter++;
-                        if(fill_counter > n_maxrs){
-                            TORCH_WARN("fill_counter ", fill_counter, " is larger than n_maxrs ", n_maxrs, ", breaking.");
+                        if(fill_counter >= n_maxrs){
+                            TORCH_WARN("fill_counter ", fill_counter, " is larger than or equal to n_maxrs ", n_maxrs, ", breaking.");
                             break;
                         }
+                        M_not[I2D(fill_counter, k, n_unique)] = i_v;
+                        fill_counter++;
                     }
                 }
                 for(; fill_counter < n_maxrs; fill_counter++){
@@ -131,7 +131,9 @@ std::tuple<torch::Tensor, torch::Tensor> oc_helper_cpu(
     auto n_maxrs = max_n_in_splits.data_ptr<int64_t>()[0];
 
     torch::Tensor M_transposed = torch::empty({n_maxuq, n_unique}, options_int);
-    torch::Tensor M_not_transposed = torch::empty({n_maxrs, n_unique}, options_int);
+    torch::Tensor M_not_transposed = calc_m_not
+        ? torch::full({n_maxrs, n_unique}, -1, options_int)
+        : torch::empty({0, 0}, options_int);
 
 
     calc_m<int64_t>(
@@ -157,4 +159,3 @@ std::tuple<torch::Tensor, torch::Tensor> oc_helper_cpu(
 TORCH_LIBRARY(oc_helper_cpu, m) {
     m.def("oc_helper_cpu", &oc_helper_cpu);
 }
-

@@ -12,17 +12,17 @@ order after the paper release.
 - PCA paper-release: `7e84da8` (2026-08-14)
 - Common base: `f951f1e` (2025-12-08)
 
-## Required Before The Next Production Release
+## Integrated In v1.2.0
 
-1. Port current-stream kernel launches from `198bab3`.
-2. Port active-stream row-split transfer ordering from `357d521`.
-3. Port CUDA device guards from `8a91943`.
-4. Port CUDA placement and same-device validation from `6238965`.
-5. Port the safe Object Condensation bounds and synchronization fixes from
-   `b7c27a0`, with regression tests.
+1. Current-stream kernel launches from `198bab3`.
+2. Active-stream row-split transfer ordering from `357d521`.
+3. CUDA device guards from `8a91943`.
+4. CUDA placement and same-device validation from `6238965`.
+5. Safe Object Condensation bounds, synchronization, and optional-output
+   handling from `b7c27a0`, with regression tests.
 
-These commits must be integrated manually: direct cherry-picks conflict with
-the PCA-specific local/global dispatch, PCA bin-coordinate handling,
+These changes were integrated manually because direct cherry-picks conflict
+with the PCA-specific local/global dispatch, PCA bin-coordinate handling,
 autograd-memory changes, and fused scatter path.
 
 ## Deferred Changes
@@ -41,11 +41,18 @@ but needs validation there. Upstream also adds no distributed or data-parallel
 implementation. `CUDAGuard` enables correct single-process multi-device use;
 it is not multi-GPU partitioning.
 
-## Required Validation After Porting
+## Validation Status
 
-- Default and non-default CUDA streams.
-- `cuda:1` inputs while `cuda:0` is current.
-- Mixed-device and CPU-input rejection.
+Completed on an A100 with CUDA 12.1 and PyTorch 2.5:
+
+- Default and non-default CUDA stream execution.
+- Mixed CPU/CUDA input rejection.
 - PCA forward/backward exactness against the reference path.
 - Object Condensation maximum-size and `calc_m_not=False` cases.
-- H100 build and smoke test, followed by paper exactness/performance smokes.
+- A compile-only build of every CUDA extension for `sm_90`.
+
+The two-device `cuda:1` regression test is included but skips when fewer than
+two GPUs are visible. An H100 runtime smoke test is also still pending because
+the validation cluster exposes A100 GPUs only. Neither limitation blocks the
+A100 paper release, but both should be completed before claiming runtime
+validation on those hardware configurations.

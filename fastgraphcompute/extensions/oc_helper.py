@@ -7,9 +7,10 @@ torch.ops.load_library(osp.join(osp.dirname(
     osp.realpath(__file__)), 'oc_helper_cpu.so'))
 torch.ops.load_library(osp.join(osp.dirname(
     osp.realpath(__file__)), 'oc_helper_helper.so'))
-if torch.cuda.is_available():
-    torch.ops.load_library(osp.join(osp.dirname(
-        osp.realpath(__file__)), 'oc_helper_cuda.so'))
+_cuda_library_path = osp.join(osp.dirname(
+    osp.realpath(__file__)), 'oc_helper_cuda.so')
+if osp.exists(_cuda_library_path):
+    torch.ops.load_library(_cuda_library_path)
 
 
 max_same_valued_entries_per_row_split = torch.ops.oc_helper_helper.max_same_valued_entries_per_row_split
@@ -162,7 +163,7 @@ def oc_helper_matrices(
         row_splits (torch.Tensor): The row_splits tensor that defines how the
                                    truth_idxs are split into segments.
         calc_m_not (bool): If True, the M_not matrix is also calculated, otherwise
-                           it will contain -1s.
+                           an empty tensor is returned without allocating M_not.
 
     Returns:
         torch.Tensor: The M matrix, as indices such that the point properties can be selected with select_with_default.
@@ -170,7 +171,8 @@ def oc_helper_matrices(
                       The dimensionality is (N_objects, N_max_points_per_object).
                       The matrix is not sorted by row splits anymore.
                       Can be used in conjunction with select_with_default to select the points.
-        torch.Tensor: The M_not matrix (either calculated or filled with -1s).
+        torch.Tensor: The M_not matrix, or an empty (0, 0) tensor when
+                      calc_m_not=False.
                       It contains indices to select all points that do *not* belong to the object.
                       Row split boundaries are not crossed.
                       The dimensionality is (N_objects, N_max_points_per_row_split).

@@ -34,7 +34,7 @@ pip install torch_geometric pyg_lib torch_scatter torch_sparse torch_cluster tor
 
 You can install FastGraphCompute directly from GitHub:
 ```bash
-pip install git+https://github.com/AgarwalAarush/FastGraphCompute@pca-fgc-paper-v1.1.0
+pip install git+https://github.com/AgarwalAarush/FastGraphCompute@pca-fgc-paper-v1.2.0
 ```
 
 Alternatively, if developing locally, clone the repository and install:

@@ -261,6 +261,7 @@ class TestObjectCondensation(unittest.TestCase):
         self.assertTrue(L_V_rep.shape == torch.Size(
             [4, 1]), f"L_V_rep shape: {L_V_rep.shape}, expected shape: {torch.Size([4, 1])}")
 
+    @unittest.skipIf(not torch.cuda.is_available(), "CUDA not available")
     def test_full_run_cuda(self):
         '''
         test if it runs on CUDA without errors

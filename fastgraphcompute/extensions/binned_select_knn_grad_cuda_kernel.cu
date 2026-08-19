@@ -4,15 +4,8 @@
 #include "helpers.h"
 #include "cuda_helpers.h"
 #include <c10/macros/Macros.h>
-
-#define C10_CUDA_KERNEL_LAUNCH_CHECK() {                         \
-    cudaError_t err = cudaGetLastError();                        \
-    if (err != cudaSuccess) {                                    \
-        printf("CUDA Kernel launch error: %s\n",                 \
-               cudaGetErrorString(err));                         \
-        TORCH_CHECK(false, "CUDA error: ", cudaGetErrorString(err)); \
-    }                                                            \
-}
+#include <c10/cuda/CUDAStream.h>
+#include <c10/cuda/CUDAGuard.h>
 
 #ifndef CHECK_INPUT
 #define CHECK_CUDA(x) TORCH_CHECK(x.device().is_cuda(), #x " must be a CUDA tensor")
@@ -95,6 +88,14 @@ torch::Tensor binned_select_knn_grad_cuda_fn(
     CHECK_INPUT(indices);
     CHECK_INPUT(distances);
     CHECK_INPUT(coordinates);
+    TORCH_CHECK(grad_distances.device() == coordinates.device(),
+                "grad_distances must be on the same device as coordinates");
+    TORCH_CHECK(indices.device() == coordinates.device(),
+                "indices must be on the same device as coordinates");
+    TORCH_CHECK(distances.device() == coordinates.device(),
+                "distances must be on the same device as coordinates");
+    c10::cuda::CUDAGuard guard(coordinates.device());
+
     const auto n_vert = coordinates.size(0);
     const auto n_coords = coordinates.size(1);
     const auto K = indices.size(1);
@@ -103,12 +104,12 @@ torch::Tensor binned_select_knn_grad_cuda_fn(
     // and any rows skipped (e.g. masked queries) must contribute 0, not garbage.
     torch::Tensor grad_coords = torch::zeros({n_vert, n_coords}, options_float);
     grid_and_block gb(n_vert,256,n_coords,4);
+    auto stream = c10::cuda::getCurrentCUDAStream(coordinates.device().index());
     if (indices.scalar_type() == torch::kInt64) {
-        // Both kernels are on the default stream and serialize naturally; no
-        // explicit cudaDeviceSynchronize between them is needed. The neighloop
+        // Both kernels are on the current stream and serialize naturally. The neighloop
         // kernel atomicAdds into rows m != i_v while selfloop wrote i_v's row,
         // so the ordering of the two launches is correctness-preserving.
-        select_knn_grad_selfloop_kernel<int64_t><<<gb.grid(),gb.block()>>>(
+        select_knn_grad_selfloop_kernel<int64_t><<<gb.grid(),gb.block(),0,stream.stream()>>>(
             grad_distances.data_ptr<float>(),
             indices.data_ptr<int64_t>(),
             distances.data_ptr<float>(),
@@ -119,7 +120,7 @@ torch::Tensor binned_select_knn_grad_cuda_fn(
             n_coords
         );
         C10_CUDA_KERNEL_LAUNCH_CHECK();
-        select_knn_grad_neighloop_kernel<int64_t><<<gb.grid(),gb.block()>>>(
+        select_knn_grad_neighloop_kernel<int64_t><<<gb.grid(),gb.block(),0,stream.stream()>>>(
             grad_distances.data_ptr<float>(),
             indices.data_ptr<int64_t>(),
             distances.data_ptr<float>(),

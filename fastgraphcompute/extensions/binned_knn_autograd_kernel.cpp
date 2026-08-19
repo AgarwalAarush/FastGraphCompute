@@ -221,14 +221,10 @@ struct BinnedKNNAutograd : public torch::autograd::Function<BinnedKNNAutograd> {
             }
         }
 
-        // Phase 2a: only save for backward when autograd actually needs it.
-        // Guards: GradMode globally enabled (i.e., not inside torch.no_grad())
-        // AND coords requires_grad (it's the only differentiable input). When
-        // either is false the saved-tensor refs only inflate memory without
-        // serving a purpose; skipping the save lets PyTorch's caching
-        // allocator free idx_final / dist_final / coords as soon as the
-        // caller drops them.
-        if (at::GradMode::is_enabled() && coords.requires_grad()) {
+        // Custom autograd forwards run with GradMode disabled internally, so
+        // GradMode::is_enabled() is not a valid signal here. The differentiable
+        // input's flag tells us whether backward state can be needed.
+        if (coords.requires_grad()) {
             torch::autograd::variable_list saved_tensors;
             saved_tensors.push_back(idx_final);
             saved_tensors.push_back(dist_final);
