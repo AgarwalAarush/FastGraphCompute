@@ -149,3 +149,11 @@ dmypy.json
 # claude
 .claude/
 .cursor/
+
+# Public GPU operator packet; keep private inputs and returned data out of Git.
+!revision_campaign/*.sh
+revision_campaign/local/
+revision_campaign/generated/
+revision_results/*
+!revision_results/README.md
+reproduction/run/

@@ -1,0 +1,6 @@
+# Small shared dependencies, installed into each backend environment.
+numpy==1.26.4
+matplotlib==3.9.4
+nvidia-ml-py==12.560.30
+ninja==1.11.1.3
+packaging>=24,<26

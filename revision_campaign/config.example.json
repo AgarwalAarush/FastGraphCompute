@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "run_root": "/ABSOLUTE/PRIVATE/NEW/fastgraph-review-h100",
+  "library_source": "/ABSOLUTE/PATH/FastGraphCompute-paper-release",
+  "library_commit": "76a869cc8758a8a846b18e93934e2b6078d83279",
+  "instrumented_library_source": "/ABSOLUTE/PRIVATE/PATH/FastGraphCompute-counters",
+  "site_env": "",
+  "expected_gpu_regex": "H100",
+  "allow_mig": false,
+  "full_device_confirmed": false,
+  "python_executables": {
+    "core": "/ABSOLUTE/PATH/env-core/bin/python",
+    "faiss": "/ABSOLUTE/PATH/env-faiss/bin/python",
+    "cuvs": "/ABSOLUTE/PATH/env-cuvs/bin/python",
+    "ggnn": "/ABSOLUTE/PATH/env-ggnn/bin/python"
+  },
+  "backends": ["fgc_pca", "fgc_axis", "faiss", "cuvs_bf", "cagra_nnd", "ggnn"],
+  "detector": {
+    "features": "/APPROVED/DATA/recHitFeatures.npy",
+    "row_splits": "/APPROVED/DATA/recHitFeatures_rowsplits.npy",
+    "layout": "concatenated_local_offsets",
+    "event_layout_confirmed": false,
+    "provenance_note": "/APPROVED/DATA/event-layout-confirmation.txt",
+    "feature_schema": "/APPROVED/DATA/feature-schema.json",
+    "columns": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+  },
+  "learned_manifest": null,
+  "ann": {
+    "cagra_itopk": [64, 128, 256, 512],
+    "ggnn_tau": [0.3, 0.64, 0.8, 1.0],
+    "ggnn_max_iterations": 400,
+    "ggnn_k_build": 24,
+    "ggnn_tau_build": 0.5
+  },
+  "model": {
+    "adapter": null,
+    "trained_checkpoint_confirmed": false,
+    "checkpoints": [],
+    "capture_layers": [],
+    "capture_batches": 3,
+    "backends": ["fgc_pca", "fgc_axis"],
+    "owner_options": {}
+  },
+  "grids": {
+    "pilot": {
+      "dims": [4, 8], "points": [10000], "distributions": ["gaussian"],
+      "seeds": [42], "event_batches": [1], "cohorts": 1,
+      "neighbors": [40], "bin_dims": [3], "repetitions": 1, "warmups": 1,
+      "reference_queries": 32, "full_reference_limit": 8192, "model_steps": 3
+    },
+    "focused": {
+      "dims": [4, 8, 10], "points": [100000, 1000000],
+      "distributions": ["gaussian", "anisotropic_0.90", "anisotropic_0.99"],
+      "seeds": [42, 43], "event_batches": [1, 4, 16], "cohorts": 3,
+      "neighbors": [40], "bin_dims": [3], "repetitions": 3, "warmups": 1,
+      "reference_queries": 512, "full_reference_limit": 8192, "model_steps": 30
+    },
+    "full": {
+      "dims": [4, 8, 10], "points": [100000, 1000000],
+      "distributions": ["gaussian", "anisotropic_0.50", "anisotropic_0.90", "anisotropic_0.99"],
+      "seeds": [42, 43, 44], "event_batches": [1, 4, 16], "cohorts": 5,
+      "neighbors": [10, 40, 100], "bin_dims": [2, 3, 4, 5], "pca_subsamples": [2000, 50000], "repetitions": 3, "warmups": 1,
+      "reference_queries": 1024, "full_reference_limit": 8192, "model_steps": 100
+    }
+  },
+  "stage_chunks": {"prepare": 1, "reference": 3, "benchmark": 4, "profile": 2, "counters": 2, "model": 2},
+  "slurm": {
+    "partition": null, "account": null, "qos": null, "constraint": null,
+    "gres": "gpu:1", "cpus": 8, "memory": "64G", "walltime": "04:00:00", "worker_seconds": 12000
+  }
+}
