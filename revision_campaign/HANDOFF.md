@@ -4,6 +4,11 @@
 agent.** It covers getting the code, setup, the run command and returning results.
 No access to the original chat is needed.
 
+November 10 check: the complete synthetic pilot, resume, ZIP return and plotting
+pass on A100, including all six backends. The Slurm launch-path and cuVS output
+adapter fixes are included. See [VALIDATION.md](VALIDATION.md) for tested scope;
+the actual H100 environment still requires preflight.
+
 **The 25-minute command below is a pilot, not the production dataset.** The
 same script runs production when given `production.plan.json`. Increasing the
 time limit or repeating `pilot.plan.json` only runs more of that pilot.

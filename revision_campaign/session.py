@@ -105,7 +105,7 @@ def session(plan, plan_path, minutes=25, execute=False, strategy="front", unit_m
             previous_signals[name] = signal.signal(name, lambda _signum, _frame: stopped.set())
         code = 0
         try:
-            environment = dict(os.environ, FGC_SITE_ENV=cfg.get("site_env", ""))
+            environment = dict(os.environ, FGC_SITE_ENV=cfg.get("site_env", ""), FGC_CAMPAIGN_ROOT=str(ROOT))
             schedule = units(plan)
             mapping = {task_id(t): t for t in plan["tasks"]}
             commands = {args[args.index("--unit-id") + 1]: args

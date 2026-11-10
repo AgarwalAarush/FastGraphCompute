@@ -5,8 +5,14 @@ plan=${1:?usage: submit_complement.sh PLAN CALIBRATION CORE_PYTHON [CALIBRATION_
 calibration=${2:?supply calibration JSON path}
 python=${3:?supply core Python executable}
 calibration_job=${4:-}
+last_slot_minutes=${FGC_LOCAL_LAST_SLOT_MINUTES:-100}
+if [[ ! $last_slot_minutes =~ ^[0-9]+$ ]] || (( last_slot_minutes < 6 || last_slot_minutes > 100 )); then
+  echo "FGC_LOCAL_LAST_SLOT_MINUTES must be an integer from 6 to 100" >&2
+  exit 2
+fi
 campaign_repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$campaign_repo"
+export FGC_CAMPAIGN_ROOT="$campaign_repo"
 run_root=$("$python" -c 'import json,sys; print(json.load(open(sys.argv[1]))["config"]["run_root"])' "$plan")
 mkdir -p "$run_root/logs"
 manifest="$run_root/local-submission.tsv"
@@ -24,10 +30,11 @@ for slot in 1 2 3; do
   walltime=04:00:00
   minutes=235
   if [[ $slot == 3 ]]; then
-    walltime=01:40:00
-    minutes=95
+    printf -v walltime '%02d:%02d:00' "$((last_slot_minutes / 60))" "$((last_slot_minutes % 60))"
+    minutes=$((last_slot_minutes - 5))
   fi
-  args=(--parsable --partition=work --qos=heavy --gres=mps:100 --cpus-per-task=4 --mem=32G
+  args=(--parsable --chdir="$campaign_repo" --export=ALL --no-requeue --kill-on-invalid-dep=yes
+    --partition=work --qos=heavy --gres=mps:100 --cpus-per-task=4 --mem=32G
     --time="$walltime" --job-name="fgcr_local_$slot"
     --output="$run_root/logs/local_slot${slot}_%j.log" --error="$run_root/logs/local_slot${slot}_%j.err")
   if [[ -n $dependency ]]; then args+=(--dependency="$dependency"); fi
@@ -36,7 +43,8 @@ for slot in 1 2 3; do
   [[ $gpu =~ ^[0-9]+$ ]]
   printf 'gpu\t%s\t%s\t%s\n' "$gpu" "$minutes" "$dependency" >> "$manifest"
   echo "Submitted mps:100 slot $slot: $gpu"
-  cpu=$(sbatch --parsable --partition=work --cpus-per-task=2 --mem=8G --time=00:20:00 \
+  cpu=$(sbatch --parsable --chdir="$campaign_repo" --export=ALL --no-requeue --kill-on-invalid-dep=yes \
+    --partition=work --cpus-per-task=2 --mem=8G --time=00:20:00 \
     --job-name="fgcr_plot_$slot" --dependency="afterany:$gpu" \
     --output="$run_root/logs/collect_slot${slot}_%j.log" --error="$run_root/logs/collect_slot${slot}_%j.err" \
     "$campaign_repo/revision_campaign/local_collect.sh" "$plan" "$python")

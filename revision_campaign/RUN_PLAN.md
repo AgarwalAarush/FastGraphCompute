@@ -1,6 +1,6 @@
 # FastGraph revision run plan — review before submission
 
-Date: November 4, 2026; public handoff updated November 9, 2026.
+Date: November 4, 2026; public handoff checked November 10, 2026.
 Operator branch: `codex/gpu-operator-handoff` in public
 `AgarwalAarush/FastGraphCompute`. Author maintenance remains on
 `codex/reviewer-gpu-campaign` in `fgc-performance`.
@@ -9,8 +9,9 @@ Operator branch: `codex/gpu-operator-handoff` in public
 
 This is an executable experiment harness and an operator handoff. It is not
 a claim that the missing model/data-owner inputs have already been supplied,
-nor that H100 kernels have been exercised here. No GPU campaign has been
-submitted. The source is kept on a branch for author review and later merge.
+nor that H100 kernels have been exercised here. The local synthetic A100 pilot
+has since passed; see VALIDATION.md for its scope and the required recipient
+checks. The source is kept on a branch for author review and later merge.
 
 The exact earlier explanation is saved separately in Downloads as
 `FastGraph-reviewer-requests-and-GPU-budget.md` and its matching PDF. The

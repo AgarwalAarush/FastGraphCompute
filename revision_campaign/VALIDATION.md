@@ -1,4 +1,33 @@
-# Validation status — November 9, 2026
+# Validation status — November 10, 2026
+
+## Public handoff recheck
+
+- All 47 CPU tests pass, including executing copies of the worker, local-run
+  and collection scripts from an unrelated Slurm spool directory. The launch
+  paths now carry the campaign root explicitly. Actual CPU Slurm job 64773
+  also loaded the CLI successfully through the spooled worker wrapper.
+- All six selected backends passed actual segmented CUDA preflight on the
+  local A100 at `mps:100`: FGC PCA/axis, FAISS GPU, cuVS brute force, CAGRA
+  NN-Descent and GGNN. cuVS output arrays now pass through a CuPy GPU view
+  before DLPack conversion; RAFT's CUDA-array-interface-only type is supported.
+  These are local A100 environments, not the recipient's H100 stack.
+- Both documented FAISS-1.12.0 and cuVS-25.02 Conda recipes resolved in fresh
+  dry-run solves with Python 3.11, CUDA 12.4 and NumPy 1.26.4. This verifies
+  dependency resolution; it does not certify installation or H100 execution.
+- The full-device A100 historical timing check passed: median 9,932.549 ms
+  versus 9,940.165 ms previously (0.077% faster), three fresh processes on the
+  unchanged pinned release. The first production wrapper failed before any
+  measurements; its logs are retained and its blocked successors canceled.
+- The actual synthetic A100 pilot completed all 44 bundles across seven
+  cases: numerical references/checks, all six benchmark backends, six memory/
+  profiler passes and both diagnostic counter variants. NVML recorded samples,
+  and instrumented distances matched the released solver. Repeating the same
+  command completed without rerunning any workers. Importing its real results
+  ZIP into a separate directory generated eight PDFs. These small pilot
+  measurements do not establish production-scale or H100 performance.
+
+The real trained-model checkpoint/adapter and confirmed event metadata remain
+missing. Those production scopes cannot be completed from this code alone.
 
 ## Completed here
 

@@ -9,7 +9,14 @@ plan=${1:?supply the private local plan}
 calibration=${2:?supply the passed drift-check JSON}
 work_minutes=${3:?supply session minutes leaving five minutes before allocation end}
 python=${4:?supply core Python executable}
-campaign_repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+campaign_repo=${FGC_CAMPAIGN_ROOT:-${SLURM_SUBMIT_DIR:-}}
+if [[ -z $campaign_repo ]]; then
+  campaign_repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+fi
+[[ -f $campaign_repo/revision_campaign/__init__.py ]] || {
+  echo "Set FGC_CAMPAIGN_ROOT to the operator checkout before submitting this job" >&2
+  exit 2
+}
 cd "$campaign_repo"
 if [[ ${CUDA_MPS_ACTIVE_THREAD_PERCENTAGE:-} != 100 ]]; then
   echo "This local runner requires a Slurm mps:100 allocation" >&2

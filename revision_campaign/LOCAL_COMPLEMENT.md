@@ -76,11 +76,18 @@ omit it if calibration already completed successfully. The submission records
 each ID immediately and refuses to overwrite its manifest. GPU slots are
 serialized with CPU plotting/export between them. Cancellation or a critical
 failure prevents later GPU slots from starting; no canceled job resubmits itself.
+`FGC_LOCAL_LAST_SLOT_MINUTES` can shorten the final allocation (6–100 minutes,
+default 100); its work limit leaves five minutes for collection. This accounts
+for diagnostic allocations within a fixed overall GPU budget.
 
-The prepared local run directory is
-`/home/export/aarusha/tmp/fgc-complement-20261109/`. A ten-hour maximum allocation
-allowance consists of the initial 20-minute calibration slot, then 4h + 4h +
-1h40m GPU slots (235/235/95-minute work limits). Jobs request `mps:100`, run
+The repaired local run directory is
+`/home/export/aarusha/tmp/fgc-complement-20261110/`, with code frozen in
+`code-8265bfd/`. The November 9 calibration passed; its original wrapper failure
+and logs remain preserved in the previous run directory. The replacement plan
+has the identical 41 cases and 421 tasks/settings. A ten-hour maximum allocation
+allowance covers the original 20-minute calibration ceiling, 5- and 10-minute
+audit ceilings, then 4h + 4h + 1h25m production slots (235/235/80-minute work
+limits). Jobs request `mps:100`, run
 serially, and have no resubmission trap. CPU-only collection runs between slots
 to export results and generate graphs; a critical numerical/input failure stops
 the remaining GPU chain. Optional comparator failures stay visible while

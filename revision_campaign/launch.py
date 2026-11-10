@@ -31,7 +31,8 @@ def jobs(plan, plan_path, stages, scheduler):
                 arguments.append("--require-complete")
             if scheduler == "slurm":
                 name = f"fgcr_{stage}_{backend}_{unit['id'][:8]}_{chunk}"
-                args = ["sbatch", "--parsable", "--job-name", name, "--nodes", "1", "--ntasks", "1",
+                args = ["sbatch", "--parsable", "--chdir", str(ROOT), "--export=ALL", "--no-requeue",
+                        "--job-name", name, "--nodes", "1", "--ntasks", "1",
                         "--cpus-per-task", str(site["cpus"]), "--mem", site["memory"], "--time", site["walltime"],
                         "--gres", site["gres"], "--signal", "B:USR1@180",
                         "--output", str(Path(cfg["run_root"]) / "logs" / (name + "_%j.out")),
@@ -85,7 +86,7 @@ def launch(plan, plan_path, scheduler, stages, execute=False):
                 previous = "PREVIOUS_JOB_ID"
             continue
         (root / "logs").mkdir(parents=True, exist_ok=True)
-        env = dict(os.environ, FGC_SITE_ENV=cfg.get("site_env", ""))
+        env = dict(os.environ, FGC_SITE_ENV=cfg.get("site_env", ""), FGC_CAMPAIGN_ROOT=str(ROOT))
         if scheduler == "slurm":
             value = subprocess.check_output(args, text=True, env=env).strip()
             previous = value.split(";")[0]

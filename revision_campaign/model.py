@@ -6,7 +6,7 @@ import copy
 import math
 
 from .backends import timed
-from .common import adapter, atomic_json, digest, file_digest, task_id
+from .common import adapter, attach_source, atomic_json, digest, file_digest, task_id
 
 
 def validate_model_config(cfg):
@@ -24,6 +24,7 @@ def capture(cfg):
     import numpy as np
     import torch
     validate_model_config(cfg)
+    attach_source(cfg)
     owner = adapter(cfg)
     catalog = {"snapshots": []}
     root = Path(cfg["run_root"]) / "learned"

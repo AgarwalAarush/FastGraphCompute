@@ -98,6 +98,11 @@ class Backend:
                 import ggnn
                 indices, distances = index.query(part, self.k, quality["tau_query"],
                                                 quality["max_iterations"], ggnn.DistanceMeasure.Euclidean)
+            if self.name in ("cuvs_bf", "cagra_nnd"):
+                # RAFT device_ndarray exposes the CUDA array interface, not DLPack.
+                # CuPy provides a GPU view and a DLPack producer for either cuVS output type.
+                import cupy as cp
+                indices, distances = cp.asarray(indices), cp.asarray(distances)
             if not isinstance(indices, torch.Tensor):
                 indices = torch.from_dlpack(indices)
             output_idx.append(indices.to(device=self.x.device, dtype=torch.int64) + offset)
