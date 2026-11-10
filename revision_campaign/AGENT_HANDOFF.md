@@ -8,6 +8,12 @@ for both checkouts. Aarush maintains returned results in `fgc-performance`
 and the manuscript in `fastgraph-paper`; neither private checkout is needed
 by the operator.
 
+The short HANDOFF.md provides `start.sh` for automatic setup plus the synthetic
+pilot in an existing full-GPU allocation. `--execute` explicitly starts that
+documented pilot; its initial builds need longer than a debug slot. Keep the
+work directory/code unchanged when resuming. Full production still needs the
+real model/data and a separately reviewed plan in OPERATOR_DETAILS.md.
+
 Read the host's AGENTS.md/local rules, then [HANDOFF.md](HANDOFF.md),
 [RUN_PLAN.md](RUN_PLAN.md), [SETUP.md](SETUP.md), [MODEL_ADAPTER.md](MODEL_ADAPTER.md)
 and [VALIDATION.md](VALIDATION.md). Use private scratch and new environments;
@@ -15,7 +21,7 @@ keep `reproduction/` and existing author work intact.
 
 Your assignment:
 
-Execution uses the priority policy in HANDOFF.md: gates, preferred checkpoint
+Execution uses the priority policy in OPERATOR_DETAILS.md: gates, preferred checkpoint
 model steps, learned/event matched cases, bounded controls/diagnostics, breadth.
 Put the preferred trained checkpoint/layer first before capture/planning. Use
 LOCAL_COMPLEMENT.md for the complementary local strategy. Never fill a missing
@@ -30,13 +36,13 @@ method's timing with a result from another GPU class.
 3. Obtain the real feature schema, written event-layout confirmation, and
    trained-model adapter/checkpoints from the owner. Report missing inputs
    explicitly. Random coordinates or zero-loss models cannot substitute.
-4. Generate the exact pilot plan and launch preview for Aarush to review.
-   Do not submit experiments until Aarush approves that plan. Review the
+4. Use the documented `start.sh --execute` synthetic pilot, or generate and
+   review a custom pilot plan before executing it. Review the
    measured pilot budget before generating/launching production. Changed code,
    inputs or configuration require a new reviewed plan and new run root.
    For an already allocated GPU, [QUICK_RUN.md](QUICK_RUN.md) gives the single
    `run_all.sh` entry point, a total session budget and automatic results export.
-   Continue with the explicit production procedure in [HANDOFF.md](HANDOFF.md):
+   Continue with the explicit [production procedure](OPERATOR_DETAILS.md#production-all-configured-results):
    a separate config/run root, coordinate capture, `focused --scope all`, and
    `production.plan.json`. Repeating the pilot never expands it into production.
    The 32–66-hour planning range is in full-A100 hours, not measured H100 time;

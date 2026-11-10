@@ -2,6 +2,15 @@
 
 ## Public handoff recheck
 
+- The short landing page now provides `start.sh` for automatic owned/resumable
+  source downloads, four environments, builds, CPU/GPU checks and the synthetic
+  pilot. Six additional CPU tests cover nonmutating preview, preservation of
+  unrelated directories, identity changes, cached/interrupted steps, immutable
+  pilot plans and explicit resumption of an interrupted Conda prefix. All 53
+  tests passed. The former detailed handoff is preserved in OPERATOR_DETAILS.md.
+  A complete fresh install through this new startup wrapper has not been run
+  here; the earlier actual A100 pilot used the manually prepared local stack.
+
 - All 47 CPU tests pass, including executing copies of the worker, local-run
   and collection scripts from an unrelated Slurm spool directory. The launch
   paths now carry the campaign root explicitly. Actual CPU Slurm job 64773

@@ -1,6 +1,9 @@
 # FastGraph GPU campaign — detailed setup and operation
 
-Start with [HANDOFF.md](HANDOFF.md) for the short checklist and repository map.
+Start with [HANDOFF.md](HANDOFF.md) for the short checklist; the repository map
+is in [OPERATOR_DETAILS.md](OPERATOR_DETAILS.md).
+Its `start.sh` command automates fresh synthetic-pilot setup. Use the manual
+instructions below for site customization and real event/model production.
 This reference supplies the installation, configuration, preflight and resume
 details. Read RUN_PLAN.md for scientific approval decisions.
 

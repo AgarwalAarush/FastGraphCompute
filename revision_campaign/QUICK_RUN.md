@@ -1,5 +1,9 @@
 # One script for an allocated GPU
 
+Starting from a fresh machine? [HANDOFF.md](HANDOFF.md) gives the `start.sh`
+command that also handles installation/builds. This page covers `run_all.sh`
+after setup is complete.
+
 Entry point: **`revision_campaign/run_all.sh`** on branch
 `codex/gpu-operator-handoff` of public `AgarwalAarush/FastGraphCompute`.
 
@@ -8,7 +12,7 @@ config, clean pinned library, backend environments and counter build. Setup
 time is additional; the script does not install environments or obtain data.
 It runs inside an existing full-GPU allocation and never submits another job.
 
-The actual queue now follows the scientific priorities in [HANDOFF.md](HANDOFF.md).
+The actual queue follows the scientific priorities in [OPERATOR_DETAILS.md](OPERATOR_DETAILS.md).
 Use [LOCAL_COMPLEMENT.md](LOCAL_COMPLEMENT.md) for the complementary A100 worker.
 Regenerate plans after updating this code; measurement/settings coverage stays
 explicit in the plan and every results return.
@@ -56,7 +60,7 @@ guaranteed. This first return checks the environment and informs the real budget
 
 ## Production
 
-Follow the complete **[production procedure in HANDOFF.md](HANDOFF.md)**: create
+Follow the complete **[production procedure](OPERATOR_DETAILS.md#production-all-configured-results)**: create
 a separate config/run root, supply real inputs, capture coordinates, and generate
 the reviewed `focused --scope all` production plan. Then, for an existing
 four-hour allocation:

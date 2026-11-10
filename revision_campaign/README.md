@@ -10,10 +10,12 @@ and covers obtaining code, setup, plan approval, execution and returning data.
 
 | Need | Instructions |
 | --- | --- |
+| Fresh-machine setup and synthetic pilot in one command | [HANDOFF.md](HANDOFF.md) |
 | One script inside a short GPU allocation | [QUICK_RUN.md](QUICK_RUN.md) |
 | Complement the remote operator, calibrate A100 timings and collect local graphs | [LOCAL_COMPLEMENT.md](LOCAL_COMPLEMENT.md) |
 | Review scope, reuse and GPU budget | [RUN_PLAN.md](RUN_PLAN.md) |
 | Install, configure, preflight and resume | [SETUP.md](SETUP.md) |
+| Full production procedure and repository map | [OPERATOR_DETAILS.md](OPERATOR_DETAILS.md) |
 | Give the work to another coding agent | [AGENT_HANDOFF.md](AGENT_HANDOFF.md) |
 | Connect a real trained model | [MODEL_ADAPTER.md](MODEL_ADAPTER.md) |
 | Return results to this repo and regenerate graphs | [RETURN_RESULTS.md](RETURN_RESULTS.md) |
