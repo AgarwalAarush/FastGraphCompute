@@ -2,6 +2,22 @@
 
 ## Public handoff recheck
 
+- Startup now shares one 30-minute slot across setup, checks and pilot, using
+  a smaller remaining Slurm limit when available and reserving five minutes
+  for stopping/export. Subprocess groups stop at the shared deadline; unfinished
+  owned prefixes are retained before repair. CPU-only `--setup-only` builds
+  without confirming or using a GPU, then the same work directory is used for
+  GPU preflight/pilot. All 59 CPU tests pass, including a real subprocess
+  deadline, expired allocation, retained setup, and a simulated 20-minute
+  install leaving only five pilot minutes. Fresh H100 installation is untested.
+- The local synthetic/control/ablation production plan completed all 421
+  bundles across 41 cases, with zero failed/missing bundles or unit failures.
+  Production job 64777 used 3h03m; total full-A100 allocations including
+  calibration, audits, the failed initial wrapper and completed-run no-ops
+  used 3h10m12s. Subsequent slots exited without new measurements. The returned
+  ZIP was checksum-verified/imported into a separate results location and
+  generated 42 PDFs. This completes that synthetic scope, not event/model work.
+
 - The short landing page now provides `start.sh` for automatic owned/resumable
   source downloads, four environments, builds, CPU/GPU checks and the synthetic
   pilot. Six additional CPU tests cover nonmutating preview, preservation of

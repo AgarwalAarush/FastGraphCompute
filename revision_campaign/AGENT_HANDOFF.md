@@ -10,7 +10,9 @@ by the operator.
 
 The short HANDOFF.md provides `start.sh` for automatic setup plus the synthetic
 pilot in an existing full-GPU allocation. `--execute` explicitly starts that
-documented pilot; its initial builds need longer than a debug slot. Keep the
+documented pilot. Setup, checks and pilot share a 30-minute slot; fresh setup
+can use multiple slots. Prefer `--setup-only` on a CPU compute node first, then
+use the same work directory for GPU preflight/pilot. Keep the
 work directory/code unchanged when resuming. Full production still needs the
 real model/data and a separately reviewed plan in OPERATOR_DETAILS.md.
 

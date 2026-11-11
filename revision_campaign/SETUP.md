@@ -7,6 +7,34 @@ instructions below for site customization and real event/model production.
 This reference supplies the installation, configuration, preflight and resume
 details. Read RUN_PLAN.md for scientific approval decisions.
 
+## Optional: prepare on a CPU compute node
+
+After cloning the operator branch and loading Conda and the CUDA 12.4/compiler
+modules, this builds for H100 without reserving a GPU:
+
+```bash
+bash revision_campaign/start.sh --work "$HOME/fastgraph-work" --gpu H100 --setup-only --slot-minutes 30 --execute
+```
+
+Use a CPU **compute allocation**, with 64 GiB RAM and `nvcc`, rather than a login
+node. Exit 75 is a saved setup checkpoint; repeat in another CPU slot. If one
+compile step cannot fit, a longer CPU allocation can use a larger `--slot-minutes`.
+The script targets CUDA 12.4 for Conda resolution without asserting GPU-driver
+compatibility. `SETUP READY` means installation/builds/CPU tests completed, with
+no GPU measurements or full-device confirmation recorded.
+
+Then use the same code/work directory in a whole-GPU 30-minute allocation:
+
+```bash
+bash revision_campaign/start.sh --work "$HOME/fastgraph-work" --gpu H100 --full-gpu --slot-minutes 30 --execute
+```
+
+Completed setup steps are skipped. CUDA preflight and the synthetic pilot use
+the remaining shared work budget; five minutes are reserved for stopping/export.
+When Slurm reports less time remaining, the script uses that smaller limit.
+Even a pilot may need another slot on an untested H100 environment. A result ZIP
+appears after measurements begin; a setup-only checkpoint is not a pilot result.
+
 ## 1. What the runner needs
 
 - Linux x86-64, an NVIDIA GPU (H100 expected; an A100 can use a separate

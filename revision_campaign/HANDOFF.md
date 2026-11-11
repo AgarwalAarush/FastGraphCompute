@@ -9,20 +9,22 @@ Linux, git, Python 3.10+ and `nvcc` are required.
 ```bash
 git clone --branch codex/gpu-operator-handoff https://github.com/AgarwalAarush/FastGraphCompute.git fgc-gpu-campaign
 cd fgc-gpu-campaign
-bash revision_campaign/start.sh --work "$HOME/fastgraph-work" --gpu H100 --full-gpu --execute
+bash revision_campaign/start.sh --work "$HOME/fastgraph-work" --gpu H100 --full-gpu --slot-minutes 30 --execute
 ```
 
 **The startup command downloads pinned sources, installs four environments,
 builds the code, runs CPU/GPU checks and the synthetic pilot, and exports a ZIP.**
 Use `--gpu A100` for A100, or `--site-env /absolute/path/modules.sh` for site setup.
 
-**First-time installs/builds need a longer allocation.** They are additional to
-the 25-minute pilot budget. Use a 30-minute debug slot after setup is ready.
-Repeat the identical command to resume; keep the code/work directory unchanged.
-Exit 75 means partial progress; inspect any other error. Logs stay under the
-work directory; the script never submits more GPU allocations.
+**Thirty minutes covers setup + checks + pilot**, with five minutes reserved
+to stop/export. A fresh install may fill the first slot before any benchmarks.
+Repeat the identical command in another 30-minute allocation to continue saved
+progress; keep the code/work directory unchanged. Exit 75 is a checkpoint.
+To save GPU time, [prepare setup on a CPU compute node first](SETUP.md#optional-prepare-on-a-cpu-compute-node).
+Logs stay under the work directory; the script never submits more allocations.
 
-**Send back the ZIP printed at the end**, including partial results.
+**Send back the printed results ZIP**, including partial results. A slot spent
+only on setup prints a setup checkpoint and has no measurement ZIP yet.
 The synthetic pilot needs no detector data or model checkpoint.
 
 ## Production
