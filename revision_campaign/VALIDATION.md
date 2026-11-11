@@ -1,4 +1,21 @@
-# Validation status — November 10, 2026
+# Validation status — November 11, 2026
+
+## Segmented FAISS and cold setup audit
+
+- FAISS now shares one scratch resource across event indexes searched
+  serially on the same GPU. The previous per-segment default resources
+  exhausted an 80 GB A100 on a small 64-segment input. The failing case
+  and its profile pass after repair; a separate matched-case A100 repair
+  completed all 152 bundles with no failures or missing tasks.
+- A CPU regression checks one shared resource across 64 event indexes.
+  This wrapper change requires a new reviewed plan/run root; retain old
+  failures and repeat whole affected comparisons. Do not change an active
+  frozen checkout or silently resume an old plan under changed scripts.
+- Fresh CPU-only CUDA 12.4/sm90 installation/build completed, including
+  all four environments, library/counter builds and the then-current
+  59 CPU tests. This establishes setup/build compatibility only; actual
+  H100 runtime/preflight and measurements are still required. Preserve
+  that setup audit's original checkout/work state separately.
 
 ## Public handoff recheck
 

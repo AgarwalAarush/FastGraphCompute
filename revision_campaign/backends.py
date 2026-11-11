@@ -46,12 +46,15 @@ class Backend:
             return
         if self.name == "faiss":
             import faiss
+            # Event indexes are queried serially on one device. Share the
+            # scratch allocator: one default resource per segment reserves
+            # ~1.5 GiB each and can exhaust an A100 on tiny 64-event inputs.
+            resources = faiss.StandardGpuResources()
+            self.resources.append(resources)
             for part in self.parts:
-                resources = faiss.StandardGpuResources()
                 cpu_index = faiss.IndexFlatL2(part.shape[1])
                 index = faiss.index_cpu_to_gpu(resources, part.device.index or 0, cpu_index)
                 index.add(part)
-                self.resources.append(resources)
                 self.indexes.append(index)
         elif self.name == "cuvs_bf":
             from cuvs.neighbors import brute_force
